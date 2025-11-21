@@ -1,22 +1,32 @@
+
 import Dexie, { Table } from 'dexie';
-import { Book, Highlight, Bookmark, Collection, ReadingSettings } from './types';
+import { Book, Highlight, Bookmark, Collection, ReadingSettings, ReadingSession, Badge } from './types';
+
+// Helper to safely access window.ePub
+declare global {
+  interface Window {
+    ePub: any;
+  }
+}
 
 export class LexiconDatabase extends Dexie {
   books!: Table<Book>;
   highlights!: Table<Highlight>;
   bookmarks!: Table<Bookmark>;
   collections!: Table<Collection>;
+  readingSessions!: Table<ReadingSession>;
+  badges!: Table<Badge>;
   settings!: Table<{ id: string, value: ReadingSettings }>;
 
   constructor() {
     super('LexiconDB');
-    // Use 'this as any' to bypass strict TS checks on the Dexie subclass version method if needed, 
-    // or simply call version() if types allow. Safe fallback used here.
-    (this as any).version(1).stores({
-      books: 'id, title, author, dateAdded, lastRead, isFavorite, format, progress',
+    (this as any).version(3).stores({
+      books: 'id, title, author, dateAdded, lastRead, isFavorite, format, progress, *collectionIds',
       highlights: 'id, bookId, color, createdAt',
-      bookmarks: 'id, bookId, type, timestamp',
+      bookmarks: 'id, bookId, type, timestamp, page',
       collections: 'id, name, createdAt',
+      readingSessions: 'id, bookId, startTime, duration',
+      badges: 'id, earnedAt',
       settings: 'id'
     });
   }
@@ -36,7 +46,8 @@ export const initSettings = async (): Promise<ReadingSettings> => {
     lineHeight: 1.6,
     maxWidth: 800,
     textAlign: 'left',
-    margin: 'normal'
+    margin: 'normal',
+    pdfScale: 1.0
   };
   
   await db.settings.put({ id: 'user-preferences', value: defaults });
@@ -50,36 +61,75 @@ export const saveSettings = async (settings: ReadingSettings) => {
 export const addBookToDb = async (file: File): Promise<string> => {
   const id = crypto.randomUUID();
   
-  // Phase 1: Basic Text Extraction for TXT/MD
-  let content = "";
   let title = file.name.replace(/\.[^/.]+$/, "");
+  let author = "Unknown Author";
+  let coverUrl = generateGradientCover(id, title);
+  let content = "";
   const format = file.name.split('.').pop()?.toLowerCase() as any || 'txt';
 
-  if (format === 'txt' || format === 'md') {
+  // Handle EPUB Metadata Extraction
+  if (format === 'epub' && window.ePub) {
+    try {
+      const arrayBuffer = await file.arrayBuffer();
+      const book = window.ePub(arrayBuffer);
+      await book.ready;
+      
+      // Metadata
+      const meta = await book.loaded.metadata;
+      if (meta.title) title = meta.title;
+      if (meta.creator) author = meta.creator;
+
+      // Cover
+      const coverUrlBlob = await book.coverUrl();
+      if (coverUrlBlob) {
+        // Convert Blob URL to Base64
+        const response = await fetch(coverUrlBlob);
+        const blob = await response.blob();
+        coverUrl = await new Promise((resolve) => {
+          const reader = new FileReader();
+          reader.onloadend = () => resolve(reader.result as string);
+          reader.readAsDataURL(blob);
+        });
+      }
+    } catch (e) {
+      console.error("Failed to parse EPUB metadata", e);
+    }
+  } else if (format === 'txt' || format === 'md') {
     content = await file.text();
-  } else {
-    content = "This format is stored but rendering is limited in Phase 1 demo. Please use TXT or MD files for full experience.";
   }
 
   const newBook: Book = {
     id,
     title,
-    author: "Unknown Author", 
+    author,
     format,
     file: file,
     content,
+    coverUrl,
     dateAdded: Date.now(),
     lastRead: Date.now(),
     progress: 0,
-    coverUrl: generateGradientCover(id, title)
+    currentPage: 1
   };
 
   await db.books.add(newBook);
   return id;
 };
 
-export const updateBookProgress = async (id: string, progress: number) => {
-  await db.books.update(id, { progress, lastRead: Date.now() });
+export const updateBookProgress = async (id: string, progress: number, cfi?: string) => {
+  const updateData: any = { progress, lastRead: Date.now() };
+  if (cfi) updateData.currentCfi = cfi;
+  await db.books.update(id, updateData);
+};
+
+export const updateBookPage = async (id: string, currentPage: number, totalPages: number) => {
+  const progress = (currentPage / totalPages) * 100;
+  await db.books.update(id, { 
+    currentPage, 
+    totalPages, 
+    progress, 
+    lastRead: Date.now() 
+  });
 };
 
 export const toggleFavorite = async (id: string, currentStatus: boolean | undefined) => {
@@ -88,6 +138,139 @@ export const toggleFavorite = async (id: string, currentStatus: boolean | undefi
 
 export const deleteBook = async (id: string) => {
   await db.books.delete(id);
+};
+
+// --- Highlights Operations ---
+
+export const addHighlight = async (highlight: Highlight) => {
+  await db.highlights.add(highlight);
+  
+  // Badge Check: Highlighter (100 highlights)
+  const count = await db.highlights.count();
+  if (count >= 100) unlockBadge('highlighter');
+};
+
+export const deleteHighlight = async (id: string) => {
+  await db.highlights.delete(id);
+};
+
+export const updateHighlightNote = async (id: string, note: string) => {
+  await db.highlights.update(id, { note });
+  // Badge Check: Thoughtful (50 notes)
+  const count = await db.highlights.filter(h => !!h.note).count();
+  if (count >= 50) unlockBadge('thoughtful');
+};
+
+export const updateHighlightColor = async (id: string, color: Highlight['color']) => {
+  await db.highlights.update(id, { color });
+};
+
+export const getBookHighlights = async (bookId: string) => {
+  return await db.highlights.where('bookId').equals(bookId).toArray();
+};
+
+// --- Bookmarks Operations ---
+
+export const addBookmark = async (bookmark: Bookmark) => {
+  if (bookmark.thumbnail && bookmark.thumbnail.length > 500000) {
+    console.warn("Thumbnail too large, not saving");
+    bookmark.thumbnail = undefined; 
+  }
+  await db.bookmarks.add(bookmark);
+};
+
+export const deleteBookmark = async (id: string) => {
+  await db.bookmarks.delete(id);
+};
+
+export const getBookBookmarks = async (bookId: string) => {
+  return await db.bookmarks.where('bookId').equals(bookId).reverse().sortBy('timestamp');
+};
+
+// --- Collections Operations ---
+
+export const createCollection = async (name: string, color: string, icon: string) => {
+  const newCollection: Collection = {
+    id: crypto.randomUUID(),
+    name,
+    color,
+    icon,
+    bookIds: [],
+    createdAt: Date.now(),
+    updatedAt: Date.now()
+  };
+  await db.collections.add(newCollection);
+  return newCollection.id;
+};
+
+export const deleteCollection = async (id: string) => {
+  await db.transaction('rw', db.collections, db.books, async () => {
+    const collection = await db.collections.get(id);
+    if (!collection) return;
+    
+    const books = await db.books.bulkGet(collection.bookIds);
+    for (const book of books) {
+      if (book && book.collectionIds) {
+        const newIds = book.collectionIds.filter(cid => cid !== id);
+        await db.books.update(book.id, { collectionIds: newIds });
+      }
+    }
+    await db.collections.delete(id);
+  });
+};
+
+export const toggleBookInCollection = async (bookId: string, collectionId: string) => {
+  await db.transaction('rw', db.collections, db.books, async () => {
+    const collection = await db.collections.get(collectionId);
+    const book = await db.books.get(bookId);
+    if (!collection || !book) return;
+
+    const bookIds = new Set(collection.bookIds);
+    const collectionIds = new Set(book.collectionIds || []);
+
+    if (bookIds.has(bookId)) {
+      bookIds.delete(bookId);
+      collectionIds.delete(collectionId);
+    } else {
+      bookIds.add(bookId);
+      collectionIds.add(collectionId);
+    }
+
+    await db.collections.update(collectionId, { 
+      bookIds: Array.from(bookIds),
+      updatedAt: Date.now()
+    });
+    await db.books.update(bookId, { collectionIds: Array.from(collectionIds) });
+  });
+};
+
+// --- Reading Sessions & Badges ---
+
+export const logReadingSession = async (bookId: string, durationMs: number) => {
+  if (durationMs < 1000 * 60) return; // Ignore sessions < 1 minute
+
+  const session: ReadingSession = {
+    id: crypto.randomUUID(),
+    bookId,
+    startTime: Date.now() - durationMs,
+    endTime: Date.now(),
+    duration: durationMs
+  };
+
+  await db.readingSessions.add(session);
+
+  // Check Badges
+  const finishedCount = await db.books.filter(b => Math.floor(b.progress) === 100).count();
+  if (finishedCount >= 5) unlockBadge('completionist');
+  if (finishedCount >= 10) unlockBadge('bookworm');
+};
+
+const unlockBadge = async (badgeId: string) => {
+  const exists = await db.badges.get(badgeId);
+  if (!exists) {
+    await db.badges.add({ id: badgeId, earnedAt: Date.now() });
+    // Typically trigger a global toast or event here if app structure permitted
+  }
 };
 
 function generateGradientCover(id: string, title: string): string {

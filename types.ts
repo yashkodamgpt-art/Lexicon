@@ -1,3 +1,4 @@
+
 export type BookFormat = 'pdf' | 'epub' | 'txt' | 'md';
 
 export interface Book {
@@ -15,6 +16,7 @@ export interface Book {
   progress: number; // 0-100
   totalPages?: number;
   currentPage?: number;
+  currentCfi?: string; // For EPUB location
   isFavorite?: boolean;
   collectionIds?: string[];
   
@@ -40,25 +42,48 @@ export interface ReadingSettings {
   maxWidth: number;
   textAlign: 'left' | 'justify';
   margin: 'narrow' | 'normal' | 'wide';
+  pdfScale: number;
 }
+
+export interface TOCItem {
+  id: string;
+  label: string;
+  href: string;
+  subitems?: TOCItem[];
+}
+
+export type HighlightColor = 'yellow' | 'green' | 'blue' | 'purple' | 'red';
 
 export interface Highlight {
   id: string;
   bookId: string;
   text: string;
-  color: 'yellow' | 'green' | 'blue' | 'purple' | 'red';
+  color: HighlightColor;
   note?: string;
-  cfiRange?: string;
   createdAt: number;
+  
+  // Format specific
+  cfiRange?: string; // EPUB
+  page?: number;     // PDF
+  rects?: { x: number, y: number, w: number, h: number }[]; // PDF (0-1 normalized)
+  range?: { start: number, end: number }; // TXT (char offsets)
 }
 
 export interface Bookmark {
   id: string;
   bookId: string;
-  page: number; // or progress percentage if pageless
   type: 'standard' | 'favorite' | 'note';
   note?: string;
   timestamp: number;
+  
+  // Location
+  page?: number;      // PDF / General progress
+  cfi?: string;       // EPUB
+  percentage: number; // 0-100 for progress bar placement
+  
+  // Preview
+  textSnippet?: string;
+  thumbnail?: string; // Base64 image for PDF preview
 }
 
 export interface Collection {
@@ -68,9 +93,24 @@ export interface Collection {
   icon: string;
   bookIds: string[];
   createdAt: number;
+  updatedAt: number;
 }
 
-export type ViewState = 'library' | 'reader';
+export interface ReadingSession {
+  id: string;
+  bookId: string;
+  startTime: number;
+  endTime: number;
+  duration: number; // milliseconds
+  pagesRead?: number;
+}
+
+export interface Badge {
+  id: string;
+  earnedAt: number;
+}
+
+export type ViewState = 'library' | 'reader' | 'stats';
 
 export const THEMES: Record<Theme['id'], Theme> = {
   day: { 

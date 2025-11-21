@@ -1,21 +1,31 @@
+
 import React, { useState } from 'react';
 import { Library } from './components/Library';
 import { Reader } from './components/Reader';
-import { Book, ViewState } from './types';
+import { Book, ViewState, Highlight } from './types';
 import { AnimatePresence, motion } from 'framer-motion';
 
 export default function App() {
   const [view, setView] = useState<ViewState>('library');
   const [activeBook, setActiveBook] = useState<Book | null>(null);
+  const [initialLocation, setInitialLocation] = useState<{page?: number, cfi?: string} | undefined>(undefined);
 
-  const handleOpenBook = (book: Book) => {
+  const handleOpenBook = (book: Book, location?: {page?: number, cfi?: string}) => {
     setActiveBook(book);
+    setInitialLocation(location);
     setView('reader');
   };
 
   const handleCloseBook = () => {
     setView('library');
-    setTimeout(() => setActiveBook(null), 500);
+    setTimeout(() => {
+      setActiveBook(null);
+      setInitialLocation(undefined);
+    }, 500);
+  };
+
+  const handleQuoteClick = (book: Book, highlight: Highlight) => {
+    handleOpenBook(book, { page: highlight.page, cfi: highlight.cfiRange });
   };
 
   return (
@@ -30,9 +40,9 @@ export default function App() {
             transition={{ duration: 0.4, ease: [0.19, 1, 0.22, 1] }} // Apple-style easing
             className="w-full h-full"
           >
-            <Library onOpenBook={handleOpenBook} />
+            <Library onOpenBook={handleOpenBook} onQuoteClick={handleQuoteClick} initialTab="library" />
           </motion.div>
-        ) : (
+        ) : view === 'reader' ? (
           <motion.div 
             key="reader"
             initial={{ opacity: 0, scale: 1.05, filter: 'blur(20px)' }}
@@ -41,8 +51,11 @@ export default function App() {
             transition={{ duration: 0.5, ease: [0.19, 1, 0.22, 1] }}
             className="w-full h-full relative z-10"
           >
-            {activeBook && <Reader book={activeBook} onClose={handleCloseBook} />}
+            {activeBook && <Reader book={activeBook} onClose={handleCloseBook} initialLocation={initialLocation} />}
           </motion.div>
+        ) : (
+          // Fallback or future views
+          <></>
         )}
       </AnimatePresence>
     </div>
