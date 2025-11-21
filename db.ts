@@ -139,7 +139,8 @@ export const toggleFavorite = async (id: string, currentStatus: boolean | undefi
 };
 
 export const deleteBook = async (id: string) => {
-  await db.transaction('rw', [db.books, db.highlights, db.bookmarks, db.readingSessions, db.tabs], async () => {
+  // Cast db to any to access 'transaction' if TS complains, or use standard way
+  await (db as any).transaction('rw', [db.books, db.highlights, db.bookmarks, db.readingSessions, db.tabs], async () => {
     await db.books.delete(id);
     await db.highlights.where('bookId').equals(id).delete();
     await db.bookmarks.where('bookId').equals(id).delete();
@@ -212,7 +213,7 @@ export const createCollection = async (name: string, color: string, icon: string
 };
 
 export const deleteCollection = async (id: string) => {
-  await db.transaction('rw', db.collections, db.books, async () => {
+  await (db as any).transaction('rw', [db.collections, db.books], async () => {
     const collection = await db.collections.get(id);
     if (!collection) return;
     
@@ -228,7 +229,7 @@ export const deleteCollection = async (id: string) => {
 };
 
 export const toggleBookInCollection = async (bookId: string, collectionId: string) => {
-  await db.transaction('rw', db.collections, db.books, async () => {
+  await (db as any).transaction('rw', [db.collections, db.books], async () => {
     const collection = await db.collections.get(collectionId);
     const book = await db.books.get(bookId);
     if (!collection || !book) return;
@@ -302,6 +303,8 @@ function generateGradientCover(id: string, title: string): string {
     'linear-gradient(135deg, #059669 0%, #0284c7 100%)', // Emerald to Sky
     'linear-gradient(135deg, #ea580c 0%, #dc2626 100%)', // Orange to Red
     'linear-gradient(135deg, #0f172a 0%, #334155 100%)', // Slate
+    'linear-gradient(135deg, #2563eb 0%, #0891b2 100%)', // Royal to Cyan
+    'linear-gradient(135deg, #be185d 0%, #f43f5e 100%)', // Pink to Rose
   ];
   const index = id.charCodeAt(0) % gradients.length;
   return `gradient:${gradients[index]}`; 

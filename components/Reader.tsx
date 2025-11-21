@@ -1,5 +1,5 @@
 
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { Book, ReadingSettings, THEMES, TOCItem, Highlight, HighlightColor, Bookmark } from '../types';
 import { 
   updateBookProgress, updateBookPage, initSettings, saveSettings, 
@@ -7,7 +7,7 @@ import {
   addBookmark, deleteBookmark, getBookBookmarks, logReadingSession, db 
 } from '../db';
 import { useLiveQuery } from 'dexie-react-hooks';
-import { motion, AnimatePresence } from 'framer-motion';
+import { motion, AnimatePresence, useInView } from 'framer-motion';
 import { 
   ArrowLeft, Settings, BrainCircuit, X, ChevronLeft, ChevronRight, 
   ZoomIn, ZoomOut, Menu, Edit, Trash2, Copy, Check, MessageSquare, StickyNote,
@@ -40,6 +40,8 @@ const HIGHLIGHT_COLORS: {id: HighlightColor, hex: string, class: string}[] = [
 
 export const Reader: React.FC<ReaderProps> = ({ book, onClose, initialLocation, hasTabs = false }) => {
   const [settings, setSettings] = useState<ReadingSettings | null>(null);
+  
+  // UI Visibility State
   const [showControls, setShowControls] = useState(true);
   const [showSettings, setShowSettings] = useState(false);
   const [showTOC, setShowTOC] = useState(false);
@@ -63,12 +65,7 @@ export const Reader: React.FC<ReaderProps> = ({ book, onClose, initialLocation, 
   const [pdfDoc, setPdfDoc] = useState<any>(null);
   const [pdfPageNum, setPdfPageNum] = useState(initialLocation?.page || book.currentPage || 1);
   const [numPages, setNumPages] = useState(0);
-  const [pdfRendering, setPdfRendering] = useState(false);
-  const canvasRef = useRef<HTMLCanvasElement>(null);
-  const textLayerRef = useRef<HTMLDivElement>(null);
-  const highlightLayerRef = useRef<HTMLDivElement>(null);
-  const renderTaskRef = useRef<any>(null);
-
+  
   // EPUB Mode State & Refs
   const [epubRendition, setEpubRendition] = useState<any>(null);
   const [toc, setToc] = useState<TOCItem[]>([]);
@@ -78,6 +75,7 @@ export const Reader: React.FC<ReaderProps> = ({ book, onClose, initialLocation, 
   
   // Controls timeout
   const controlsTimeoutRef = useRef<any>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
 
   // --- SESSION TRACKING STATE ---
   const sessionStartTime = useRef<number>(Date.now());
@@ -98,14 +96,29 @@ export const Reader: React.FC<ReaderProps> = ({ book, onClose, initialLocation, 
     }
   }, [settings]);
 
-  // Reset local state when book changes
+  // Reset local state when book changes (IMPORTANT for Multi-Tab)
   useEffect(() => {
     setPdfPageNum(initialLocation?.page || book.currentPage || 1);
     setEpubReady(false);
     setPdfDoc(null);
-    setPdfRendering(false);
     setEpubRendition(null);
-  }, [book.id]);
+  }, [book.id, book.format]);
+
+  // Deep Linking Update: React to initialLocation changes even if book is already open
+  useEffect(() => {
+    if (!initialLocation) return;
+
+    if (book.format === 'pdf' && initialLocation.page && initialLocation.page !== pdfPageNum) {
+       setPdfPageNum(initialLocation.page);
+       setTimeout(() => {
+          const el = document.getElementById(`pdf-page-${initialLocation.page}`);
+          if (el) el.scrollIntoView({ behavior: 'smooth' });
+       }, 100);
+    } else if (book.format === 'epub' && epubRendition && initialLocation.cfi) {
+       epubRendition.display(initialLocation.cfi);
+    }
+  }, [initialLocation, book.format, epubRendition, pdfPageNum]);
+
 
   // Toast Helper
   const showToast = (msg: string) => {
@@ -113,10 +126,11 @@ export const Reader: React.FC<ReaderProps> = ({ book, onClose, initialLocation, 
     setTimeout(() => setToast(null), 2000);
   };
 
-  // --- SESSION & IDLE TRACKING ---
+  // --- SESSION & IDLE TRACKING & UI AUTO-HIDE ---
   const handleUserActivity = useCallback(() => {
     const now = Date.now();
     
+    // Wake up
     if (isIdle.current) {
       isIdle.current = false;
       lastActivity.current = now;
@@ -125,11 +139,19 @@ export const Reader: React.FC<ReaderProps> = ({ book, onClose, initialLocation, 
     lastActivity.current = now;
     
     if (idleTimeout.current) clearTimeout(idleTimeout.current);
-    // Set idle after 60 seconds of no interaction
     idleTimeout.current = setTimeout(() => {
        isIdle.current = true;
-    }, 60000); 
-  }, []);
+    }, 60000);
+    
+    // UI Visibility Logic: Show controls on activity, hide after delay
+    if (!showSettings && !showTOC && !showBookmarksPanel && !selectionMenu) {
+       setShowControls(true);
+       if (controlsTimeoutRef.current) clearTimeout(controlsTimeoutRef.current);
+       controlsTimeoutRef.current = setTimeout(() => {
+          setShowControls(false);
+       }, 3000);
+    }
+  }, [showSettings, showTOC, showBookmarksPanel, selectionMenu]);
 
   useEffect(() => {
      const interval = setInterval(() => {
@@ -138,6 +160,7 @@ export const Reader: React.FC<ReaderProps> = ({ book, onClose, initialLocation, 
         }
      }, 1000);
 
+     // Global listeners for activity
      window.addEventListener('mousemove', handleUserActivity);
      window.addEventListener('keydown', handleUserActivity);
      window.addEventListener('click', handleUserActivity);
@@ -147,6 +170,7 @@ export const Reader: React.FC<ReaderProps> = ({ book, onClose, initialLocation, 
      return () => {
         clearInterval(interval);
         if (idleTimeout.current) clearTimeout(idleTimeout.current);
+        if (controlsTimeoutRef.current) clearTimeout(controlsTimeoutRef.current);
         window.removeEventListener('mousemove', handleUserActivity);
         window.removeEventListener('keydown', handleUserActivity);
         window.removeEventListener('click', handleUserActivity);
@@ -162,7 +186,6 @@ export const Reader: React.FC<ReaderProps> = ({ book, onClose, initialLocation, 
   // --------------------------------------------------------------------------
   // BOOKMARKING LOGIC
   // --------------------------------------------------------------------------
-  
   const getCurrentBookmark = () => {
     if (!bookmarks) return null;
     if (book.format === 'pdf') return bookmarks.find(b => b.page === pdfPageNum);
@@ -176,28 +199,12 @@ export const Reader: React.FC<ReaderProps> = ({ book, onClose, initialLocation, 
       await deleteBookmark(activeBookmark.id);
       showToast("Bookmark removed");
     } else {
-      let thumbnail: string | undefined;
       let textSnippet = "";
       let positionData: Partial<Bookmark> = {};
 
       if (book.format === 'pdf') {
          positionData = { page: pdfPageNum, percentage: (pdfPageNum / numPages) * 100 };
          textSnippet = `Page ${pdfPageNum}`;
-         
-         if (canvasRef.current) {
-           try {
-             const thumbCanvas = document.createElement('canvas');
-             const ctx = thumbCanvas.getContext('2d');
-             const srcCanvas = canvasRef.current;
-             const scale = 0.2; 
-             thumbCanvas.width = srcCanvas.width * scale;
-             thumbCanvas.height = srcCanvas.height * scale;
-             ctx?.drawImage(srcCanvas, 0, 0, thumbCanvas.width, thumbCanvas.height);
-             thumbnail = thumbCanvas.toDataURL('image/jpeg', 0.7);
-           } catch (e) {
-             console.warn("Thumbnail generation failed", e);
-           }
-         }
       } 
       else if (book.format === 'epub' && epubRendition) {
          const loc = epubRendition.currentLocation();
@@ -225,7 +232,6 @@ export const Reader: React.FC<ReaderProps> = ({ book, onClose, initialLocation, 
         page: positionData.page,
         cfi: positionData.cfi,
         textSnippet,
-        thumbnail
       };
 
       await addBookmark(newBookmark);
@@ -235,13 +241,14 @@ export const Reader: React.FC<ReaderProps> = ({ book, onClose, initialLocation, 
 
   const handleJumpToBookmark = (b: Bookmark) => {
      if (book.format === 'pdf' && b.page) {
+        const pageEl = document.getElementById(`pdf-page-${b.page}`);
+        if (pageEl) pageEl.scrollIntoView({ behavior: 'smooth' });
         setPdfPageNum(b.page);
      } else if (book.format === 'epub' && b.cfi && epubRendition) {
         epubRendition.display(b.cfi);
      }
      setShowBookmarksPanel(false);
   };
-
 
   // --------------------------------------------------------------------------
   // SELECTION HANDLING
@@ -272,28 +279,9 @@ export const Reader: React.FC<ReaderProps> = ({ book, onClose, initialLocation, 
       const text = selection.toString().trim();
       if (!text) return;
 
-      const range = selection.getRangeAt(0);
-      const rect = range.getBoundingClientRect();
-      
-      if (book.format === 'pdf' && highlightLayerRef.current && textLayerRef.current) {
-         const layerRect = textLayerRef.current.getBoundingClientRect();
-         if(!textLayerRef.current.contains(range.commonAncestorContainer)) return;
-
-         const clientRects = Array.from(range.getClientRects());
-         const relativeRects = clientRects.map(r => ({
-            x: (r.left - layerRect.left) / layerRect.width,
-            y: (r.top - layerRect.top) / layerRect.height,
-            w: r.width / layerRect.width,
-            h: r.height / layerRect.height
-         }));
-
-         setSelectionMenu({
-            x: rect.left + rect.width / 2,
-            y: rect.top - 10,
-            text,
-            rects: relativeRects
-         });
-      } else if (book.format === 'txt' || book.format === 'md') {
+      if (book.format === 'txt' || book.format === 'md') {
+         const range = selection.getRangeAt(0);
+         const rect = range.getBoundingClientRect();
          setSelectionMenu({
             x: rect.left + rect.width / 2,
             y: rect.top - 10,
@@ -304,7 +292,7 @@ export const Reader: React.FC<ReaderProps> = ({ book, onClose, initialLocation, 
   };
 
   useEffect(() => {
-    if (book.format !== 'epub') {
+    if (book.format !== 'epub' && book.format !== 'pdf') {
         document.addEventListener('mouseup', handleTextSelection);
         document.addEventListener('touchend', handleTextSelection);
     }
@@ -312,7 +300,7 @@ export const Reader: React.FC<ReaderProps> = ({ book, onClose, initialLocation, 
         document.removeEventListener('mouseup', handleTextSelection);
         document.removeEventListener('touchend', handleTextSelection);
     };
-  }, [book.format, pdfPageNum]);
+  }, [book.format]);
 
   // --------------------------------------------------------------------------
   // HIGHLIGHT ACTIONS
@@ -355,13 +343,6 @@ export const Reader: React.FC<ReaderProps> = ({ book, onClose, initialLocation, 
       navigator.clipboard.writeText(selectionMenu.text);
       showToast("Copied to clipboard");
       clearSelection();
-    } else if (activeHighlightId) {
-       const hl = highlights?.find(h => h.id === activeHighlightId);
-       if (hl) {
-         navigator.clipboard.writeText(hl.text);
-         showToast("Copied to clipboard");
-         setActiveHighlightId(null);
-       }
     }
   };
 
@@ -379,15 +360,47 @@ export const Reader: React.FC<ReaderProps> = ({ book, onClose, initialLocation, 
             width: '100%', height: '100%', flow: 'paginated', manager: 'default'
           });
 
+          // THEMES CONFIGURATION
           const themes = {
-             day: { body: { color: '#1a1a1a', background: '#fafafa' }, '::selection': { background: 'rgba(0, 102, 255, 0.3)' } },
-             night: { body: { color: '#ffffff', background: '#0a0a0a' }, '::selection': { background: 'rgba(0, 102, 255, 0.3)' } },
-             sepia: { body: { color: '#3e2723', background: '#f4ecd8' }, '::selection': { background: 'rgba(230, 81, 0, 0.3)' } },
-             twilight: { body: { color: '#e0e0e0', background: '#1a0f2e' }, '::selection': { background: 'rgba(156, 136, 255, 0.3)' } },
-             console: { body: { color: '#39ff14', background: '#0d1117' }, '::selection': { background: 'rgba(0, 255, 255, 0.3)' } }
+             day: { 
+                body: { color: '#1a1a1a', background: '#fafafa' }, 
+                '::selection': { background: 'rgba(0, 102, 255, 0.3)' } 
+             },
+             night: { 
+                body: { color: '#ffffff', background: '#0a0a0a' }, 
+                '::selection': { background: 'rgba(0, 102, 255, 0.3)' },
+                '.highlight-yellow': { fill: 'rgba(250, 204, 21, 0.6)', 'mix-blend-mode': 'normal' },
+                '.highlight-green': { fill: 'rgba(74, 222, 128, 0.6)', 'mix-blend-mode': 'normal' },
+                '.highlight-blue': { fill: 'rgba(96, 165, 250, 0.6)', 'mix-blend-mode': 'normal' },
+                '.highlight-purple': { fill: 'rgba(192, 132, 252, 0.6)', 'mix-blend-mode': 'normal' },
+                '.highlight-red': { fill: 'rgba(248, 113, 113, 0.6)', 'mix-blend-mode': 'normal' }
+             },
+             sepia: { 
+                body: { color: '#3e2723', background: '#f4ecd8' }, 
+                '::selection': { background: 'rgba(230, 81, 0, 0.3)' } 
+             },
+             twilight: { 
+                body: { color: '#e0e0e0', background: '#1a0f2e' }, 
+                '::selection': { background: 'rgba(156, 136, 255, 0.3)' },
+                '.highlight-yellow': { fill: 'rgba(250, 204, 21, 0.5)', 'mix-blend-mode': 'normal' },
+                '.highlight-green': { fill: 'rgba(74, 222, 128, 0.5)', 'mix-blend-mode': 'normal' },
+                '.highlight-blue': { fill: 'rgba(96, 165, 250, 0.5)', 'mix-blend-mode': 'normal' },
+                '.highlight-purple': { fill: 'rgba(192, 132, 252, 0.5)', 'mix-blend-mode': 'normal' },
+                '.highlight-red': { fill: 'rgba(248, 113, 113, 0.5)', 'mix-blend-mode': 'normal' }
+             },
+             console: { 
+                body: { color: '#39ff14', background: '#0d1117' }, 
+                '::selection': { background: 'rgba(0, 255, 255, 0.3)' },
+                '.highlight-yellow': { fill: 'rgba(250, 204, 21, 0.5)', 'mix-blend-mode': 'normal' },
+                '.highlight-green': { fill: 'rgba(74, 222, 128, 0.5)', 'mix-blend-mode': 'normal' },
+                '.highlight-blue': { fill: 'rgba(96, 165, 250, 0.5)', 'mix-blend-mode': 'normal' },
+                '.highlight-purple': { fill: 'rgba(192, 132, 252, 0.5)', 'mix-blend-mode': 'normal' },
+                '.highlight-red': { fill: 'rgba(248, 113, 113, 0.5)', 'mix-blend-mode': 'normal' }
+             }
           };
           Object.entries(themes).forEach(([k, v]) => rendition.themes.register(k, v));
           
+          // Default highlights (works best for light themes)
           rendition.themes.default({
              '.highlight-yellow': { fill: 'rgba(250, 204, 21, 0.3)', 'mix-blend-mode': 'multiply' },
              '.highlight-green': { fill: 'rgba(74, 222, 128, 0.3)', 'mix-blend-mode': 'multiply' },
@@ -417,7 +430,7 @@ export const Reader: React.FC<ReaderProps> = ({ book, onClose, initialLocation, 
              setSelectionMenu(null);
              setActiveHighlightId(null);
           });
-
+          
           rendition.on('selected', (cfiRange: string, contents: any) => {
             const range = contents.window.getSelection().getRangeAt(0);
             const rect = range.getBoundingClientRect();
@@ -432,32 +445,12 @@ export const Reader: React.FC<ReaderProps> = ({ book, onClose, initialLocation, 
             }
           });
 
-          if (highlights) {
-             highlights.forEach(hl => {
-                if (hl.cfiRange) {
-                   rendition.annotations.add('highlight', hl.cfiRange, {}, (e: any) => {
-                      const rect = e.target.getBoundingClientRect();
-                      const iframeRect = epubContainerRef.current?.querySelector('iframe')?.getBoundingClientRect();
-                      setActiveHighlightId(hl.id);
-                      if (iframeRect) {
-                          setSelectionMenu({
-                             x: rect.left + iframeRect.left + rect.width/2,
-                             y: rect.top + iframeRect.top - 10,
-                             text: hl.text,
-                             cfiRange: hl.cfiRange 
-                          });
-                      }
-                   }, `highlight-${hl.color}`);
-                }
-             });
-          }
-
           return () => { if(bookObj) bookObj.destroy(); };
         } catch (error) { console.error("EPUB init error:", error); }
       };
       loadEpub();
     }
-  }, [book.id, book.format]); // CRITICAL FIX: Changed [book.format] to [book.id, book.format]
+  }, [book.id, book.format]);
 
   useEffect(() => {
     if (epubRendition && settings) {
@@ -468,7 +461,7 @@ export const Reader: React.FC<ReaderProps> = ({ book, onClose, initialLocation, 
   }, [settings, epubRendition]);
 
   // --------------------------------------------------------------------------
-  // PDF ENGINE
+  // PDF ENGINE (Continuous Scroll)
   // --------------------------------------------------------------------------
   useEffect(() => {
     if (book.format === 'pdf' && window.pdfjsLib) {
@@ -478,83 +471,41 @@ export const Reader: React.FC<ReaderProps> = ({ book, onClose, initialLocation, 
         const pdf = await loadingTask.promise;
         setPdfDoc(pdf);
         setNumPages(pdf.numPages);
-        const startPage = initialLocation?.page || book.currentPage || 1;
-        if (startPage <= pdf.numPages) setPdfPageNum(startPage);
+        
+        // Scroll to initial page on first load
+        if (initialLocation?.page || book.currentPage) {
+           setTimeout(() => {
+              const pageNum = initialLocation?.page || book.currentPage || 1;
+              const el = document.getElementById(`pdf-page-${pageNum}`);
+              if (el) el.scrollIntoView();
+           }, 500);
+        }
       };
       loadPdf();
     }
-  }, [book.id, book.format]); // CRITICAL FIX: Changed [book] to [book.id, book.format]
+  }, [book.id, book.format]);
 
-  useEffect(() => {
-    if (!pdfDoc || !canvasRef.current || !settings) return;
-    const renderPage = async () => {
-      if (renderTaskRef.current) await renderTaskRef.current.cancel();
-      setPdfRendering(true);
-      try {
-        const page = await pdfDoc.getPage(pdfPageNum);
-        const viewport = page.getViewport({ scale: settings.pdfScale || 1.0 });
-        const canvas = canvasRef.current;
-        const context = canvas?.getContext('2d');
-        if (canvas && context) {
-          canvas.height = viewport.height;
-          canvas.width = viewport.width;
-          const renderTask = page.render({ canvasContext: context, viewport });
-          renderTaskRef.current = renderTask;
-          await renderTask.promise;
+  const handlePdfPageInView = useCallback((pageNum: number) => {
+     setPdfPageNum(pageNum);
+     updateBookPage(book.id, pageNum, numPages);
+  }, [book.id, numPages]);
 
-          if (textLayerRef.current) {
-             textLayerRef.current.innerHTML = '';
-             textLayerRef.current.style.height = `${viewport.height}px`;
-             textLayerRef.current.style.width = `${viewport.width}px`;
-             textLayerRef.current.style.setProperty('--scale-factor', `${settings.pdfScale || 1.0}`);
-
-             window.pdfjsLib.renderTextLayer({
-                textContentSource: await page.getTextContent(),
-                container: textLayerRef.current,
-                viewport: viewport,
-                textDivs: []
-             });
-          }
-          setPdfRendering(false);
-          updateBookPage(book.id, pdfPageNum, numPages);
-        }
-      } catch (error: any) {
-        if (error.name !== 'RenderingCancelledException') setPdfRendering(false);
-      }
-    };
-    renderPage();
-  }, [pdfDoc, pdfPageNum, settings?.pdfScale]);
-
-  const changePdfPage = (delta: number) => {
-    setSelectionMenu(null);
-    const newPage = pdfPageNum + delta;
-    if (newPage >= 1 && newPage <= numPages) setPdfPageNum(newPage);
-  };
-  
-  // --------------------------------------------------------------------------
-  // UI TIMEOUTS & AUTO HIDE
-  // --------------------------------------------------------------------------
-  const resetControlsTimeout = useCallback(() => {
-    setShowControls(true);
-    handleUserActivity();
+  // Smart Scroll Handler for PDF (Wheel Navigation)
+  const handlePdfWheel = (e: React.WheelEvent) => {
+    const scrollContainer = containerRef.current?.querySelector('.scroll-smooth');
+    if (!scrollContainer) return;
     
-    if (controlsTimeoutRef.current) clearTimeout(controlsTimeoutRef.current);
-    if (!showSettings && !showTOC && !showBookmarksPanel) {
-      controlsTimeoutRef.current = setTimeout(() => setShowControls(false), 3000);
+    // If content fits height (not scrolled), treat wheel as page turn
+    if (scrollContainer.scrollHeight <= scrollContainer.clientHeight) {
+       if (e.deltaY > 0) {
+          const nextPage = Math.min(numPages, pdfPageNum + 1);
+          document.getElementById(`pdf-page-${nextPage}`)?.scrollIntoView({ behavior: 'smooth' });
+       } else if (e.deltaY < 0) {
+          const prevPage = Math.max(1, pdfPageNum - 1);
+          document.getElementById(`pdf-page-${prevPage}`)?.scrollIntoView({ behavior: 'smooth' });
+       }
     }
-  }, [showSettings, showTOC, showBookmarksPanel, handleUserActivity]);
-
-  useEffect(() => {
-    window.addEventListener('mousemove', resetControlsTimeout);
-    if (book.format !== 'epub') window.addEventListener('click', resetControlsTimeout);
-    window.addEventListener('keydown', resetControlsTimeout);
-    return () => {
-      window.removeEventListener('mousemove', resetControlsTimeout);
-      window.removeEventListener('click', resetControlsTimeout);
-      window.removeEventListener('keydown', resetControlsTimeout);
-      if (controlsTimeoutRef.current) clearTimeout(controlsTimeoutRef.current);
-    };
-  }, [showSettings, showTOC, showBookmarksPanel, resetControlsTimeout]);
+  };
 
   if (!settings) return null;
   const theme = THEMES[settings.theme];
@@ -563,15 +514,16 @@ export const Reader: React.FC<ReaderProps> = ({ book, onClose, initialLocation, 
 
   return (
     <div 
-      className={`min-h-screen transition-colors duration-500 ${theme.bg} ${theme.text} selection:bg-blue-500/30 relative overflow-hidden`}
-      style={{ paddingTop: hasTabs ? '40px' : '0px' }}
+      ref={containerRef}
+      className={`fixed inset-0 transition-colors duration-500 ${theme.bg} ${theme.text} selection:bg-blue-500/30 overflow-hidden touch-action-pan-y`}
+      onWheel={isPdf ? handlePdfWheel : undefined}
     >
       {/* TOAST */}
       <AnimatePresence>
         {toast && (
            <motion.div 
              initial={{ opacity: 0, y: -50 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -50 }}
-             className="fixed top-24 left-1/2 -translate-x-1/2 z-[100] bg-gradient-to-r from-blue-600 to-purple-600 text-white px-6 py-2 rounded-full shadow-xl flex items-center gap-2"
+             className="fixed top-24 left-1/2 -translate-x-1/2 z-[100] bg-gradient-to-r from-blue-600 to-purple-600 text-white px-6 py-2 rounded-full shadow-xl flex items-center gap-2 pointer-events-none"
            >
               <Check className="w-4 h-4" /> {toast}
            </motion.div>
@@ -582,15 +534,17 @@ export const Reader: React.FC<ReaderProps> = ({ book, onClose, initialLocation, 
       <motion.div 
         initial={{ y: -100 }}
         animate={{ y: showControls || showSettings || showTOC || showBookmarksPanel ? 0 : -100 }}
-        className={`fixed left-0 right-0 h-16 ${theme.ui} backdrop-blur-lg border-b ${theme.border} z-40 flex items-center justify-between px-4 md:px-8 shadow-sm`}
-        style={{ top: hasTabs ? '0px' : '0px' }}
+        transition={{ duration: 0.3, ease: 'easeInOut' }}
+        className={`absolute left-0 right-0 h-16 ${theme.ui} backdrop-blur-lg border-b ${theme.border} z-40 flex items-center justify-between px-4 md:px-8 shadow-sm`}
+        style={{ top: hasTabs ? '40px' : '0px' }} // Adjust for Tab Bar
+        onClick={(e) => e.stopPropagation()}
       >
-        <div className="flex items-center gap-4">
-          <button onClick={onClose} className={`p-2 rounded-full hover:bg-white/10 transition-colors ${theme.text}`}>
+        <div className="flex items-center gap-2 md:gap-4">
+          <button onClick={onClose} className={`p-3 md:p-2 rounded-full hover:bg-white/10 transition-colors ${theme.text}`}>
             <ArrowLeft className="w-5 h-5" />
           </button>
           {isEpub && (
-             <button onClick={() => setShowTOC(!showTOC)} className={`p-2 rounded-full hover:bg-white/10 transition-colors ${showTOC ? 'bg-blue-500 text-white' : theme.text}`}>
+             <button onClick={() => setShowTOC(!showTOC)} className={`p-3 md:p-2 rounded-full hover:bg-white/10 transition-colors ${showTOC ? 'bg-blue-500 text-white' : theme.text}`}>
                <Menu className="w-5 h-5" />
              </button>
           )}
@@ -600,72 +554,62 @@ export const Reader: React.FC<ReaderProps> = ({ book, onClose, initialLocation, 
           </div>
         </div>
 
-        <div className="flex items-center gap-2">
-             <button 
-               disabled 
-               className="p-2 rounded-full opacity-30 cursor-not-allowed hover:bg-transparent flex items-center gap-2"
-               title="Coming Soon: Mindmap Generation"
-            >
+        <div className="flex items-center gap-1 md:gap-2">
+             <button disabled className="hidden sm:flex p-2 rounded-full opacity-30 cursor-not-allowed hover:bg-transparent items-center gap-2" title="Coming Soon: Mindmap Generation">
               <BrainCircuit className="w-5 h-5" />
             </button>
-            <div className="w-[1px] h-6 bg-current opacity-10 mx-1" />
+            <div className="w-[1px] h-6 bg-current opacity-10 mx-1 hidden sm:block" />
 
             <button 
               onClick={() => handleToggleBookmark('standard')}
               onContextMenu={(e) => { e.preventDefault(); handleToggleBookmark('favorite'); }}
-              className="p-2 rounded-full hover:bg-white/10 relative group"
+              className="p-3 md:p-2 rounded-full hover:bg-white/10 relative group"
             >
-              <BookmarkIcon 
-                 className={`w-5 h-5 transition-all duration-300 ${activeBookmark ? (activeBookmark.type === 'favorite' ? 'fill-yellow-400 text-yellow-400' : 'fill-blue-500 text-blue-500') : 'text-current opacity-50 group-hover:opacity-100'}`} 
-              />
+              <BookmarkIcon className={`w-5 h-5 transition-all duration-300 ${activeBookmark ? (activeBookmark.type === 'favorite' ? 'fill-yellow-400 text-yellow-400' : 'fill-blue-500 text-blue-500') : 'text-current opacity-50 group-hover:opacity-100'}`} />
               {activeBookmark && <motion.div layoutId="bookmark-glow" className="absolute inset-0 bg-blue-500/20 blur-md rounded-full" />}
             </button>
             
-             <button 
-              onClick={() => setShowBookmarksPanel(!showBookmarksPanel)}
-              className={`p-2 rounded-full transition-colors ${showBookmarksPanel ? 'bg-blue-500 text-white' : 'hover:bg-white/10'}`}
-            >
+             <button onClick={() => setShowBookmarksPanel(!showBookmarksPanel)} className={`p-3 md:p-2 rounded-full transition-colors ${showBookmarksPanel ? 'bg-blue-500 text-white' : 'hover:bg-white/10'}`}>
               <StickyNote className="w-5 h-5" />
             </button>
 
-            <button 
-              onClick={() => setShowSettings(!showSettings)}
-              className={`p-2 rounded-full transition-all ${showSettings ? 'bg-blue-500 text-white rotate-180' : 'hover:bg-white/10'}`}
-            >
+            <button onClick={() => setShowSettings(!showSettings)} className={`p-3 md:p-2 rounded-full transition-all ${showSettings ? 'bg-blue-500 text-white rotate-180' : 'hover:bg-white/10'}`}>
               <Settings className="w-5 h-5" />
             </button>
         </div>
       </motion.div>
 
-      {/* CONTEXT MENU & MODALS */}
+      {/* CONTEXT MENU */}
        <AnimatePresence>
         {selectionMenu && (
           <motion.div
              initial={{ opacity: 0, scale: 0.8, y: 10 }} animate={{ opacity: 1, scale: 1, y: 0 }} exit={{ opacity: 0, scale: 0.8 }}
              style={{ top: selectionMenu.y, left: selectionMenu.x, transform: 'translate(-50%, -100%)' }}
              className="fixed z-50 mb-3 flex flex-col items-center pointer-events-auto"
+             onClick={(e) => e.stopPropagation()}
           >
             <div className="flex items-center gap-1 p-1.5 rounded-full glass border border-white/10 shadow-2xl bg-black/80 backdrop-blur-md">
                {HIGHLIGHT_COLORS.map(c => (
-                  <button key={c.id} onClick={() => activeHighlightId ? (updateHighlightColor(activeHighlightId, c.id), setActiveHighlightId(null), setSelectionMenu(null)) : createHighlight(c.id)} className="w-6 h-6 rounded-full border border-white/10 hover:scale-125 transition-transform" style={{ backgroundColor: c.hex }} />
+                  <button key={c.id} onClick={() => activeHighlightId ? (updateHighlightColor(activeHighlightId, c.id), setActiveHighlightId(null), setSelectionMenu(null)) : createHighlight(c.id)} className="w-8 h-8 md:w-6 md:h-6 rounded-full border border-white/10 hover:scale-125 transition-transform" style={{ backgroundColor: c.hex }} />
                ))}
                <div className="w-[1px] h-4 bg-white/20 mx-1" />
-               <button onClick={() => { if (activeHighlightId) { setShowNoteModal(true); setCurrentNote(highlights?.find(h => h.id === activeHighlightId)?.note || ""); } else { createHighlight('yellow'); showToast("Highlight created"); } }} className="p-1.5 hover:bg-white/10 rounded-full text-white"><MessageSquare className="w-4 h-4" /></button>
-               <button onClick={handleCopy} className="p-1.5 hover:bg-white/10 rounded-full text-white"><Copy className="w-4 h-4" /></button>
-               {activeHighlightId && <button onClick={() => handleDeleteHighlight(activeHighlightId)} className="p-1.5 hover:bg-red-500/20 hover:text-red-500 rounded-full text-white"><Trash2 className="w-4 h-4" /></button>}
+               <button onClick={() => { if (activeHighlightId) { setShowNoteModal(true); setCurrentNote(highlights?.find(h => h.id === activeHighlightId)?.note || ""); } else { createHighlight('yellow'); showToast("Highlight created"); } }} className="p-2 md:p-1.5 hover:bg-white/10 rounded-full text-white"><MessageSquare className="w-4 h-4" /></button>
+               <button onClick={handleCopy} className="p-2 md:p-1.5 hover:bg-white/10 rounded-full text-white"><Copy className="w-4 h-4" /></button>
+               {activeHighlightId && <button onClick={() => handleDeleteHighlight(activeHighlightId)} className="p-2 md:p-1.5 hover:bg-red-500/20 hover:text-red-500 rounded-full text-white"><Trash2 className="w-4 h-4" /></button>}
             </div>
             <div className="w-3 h-3 bg-black/80 rotate-45 mt-[-6px] border-r border-b border-white/10" />
           </motion.div>
         )}
       </AnimatePresence>
 
+      {/* NOTE MODAL */}
       <AnimatePresence>
          {showNoteModal && (
-            <div className="fixed inset-0 z-[60] flex items-center justify-center">
+            <div className="fixed inset-0 z-[60] flex items-center justify-center px-4">
                <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setShowNoteModal(false)} />
-               <motion.div initial={{ scale: 0.9, y: 20 }} animate={{ scale: 1, y: 0 }} exit={{ scale: 0.9, y: 20 }} className="relative w-full max-w-md p-6 rounded-2xl glass border border-white/10 bg-[#111] shadow-2xl m-4">
+               <motion.div initial={{ scale: 0.9, y: 20 }} animate={{ scale: 1, y: 0 }} exit={{ scale: 0.9, y: 20 }} className="relative w-full max-w-md p-6 rounded-2xl glass border border-white/10 bg-[#111] shadow-2xl">
                   <h3 className="text-lg font-bold mb-4 flex items-center gap-2"><StickyNote className="w-5 h-5 text-yellow-500" /> Note</h3>
-                  <textarea className="w-full h-32 bg-black/20 rounded-lg p-3 text-white resize-none focus:outline-none focus:ring-2 focus:ring-blue-500/50" placeholder="Add your thoughts..." value={currentNote} onChange={(e) => setCurrentNote(e.target.value)} autoFocus />
+                  <textarea className="w-full h-32 bg-black/20 rounded-lg p-3 text-white resize-none focus:outline-none focus:ring-2 focus:ring-blue-500/50 text-base" placeholder="Add your thoughts..." value={currentNote} onChange={(e) => setCurrentNote(e.target.value)} autoFocus />
                   <div className="flex justify-end gap-3 mt-4">
                      <button onClick={() => setShowNoteModal(false)} className="px-4 py-2 rounded-lg hover:bg-white/10 text-sm">Cancel</button>
                      <button onClick={() => { if (activeHighlightId) { updateHighlightNote(activeHighlightId, currentNote); showToast("Note saved"); setShowNoteModal(false); setSelectionMenu(null); setActiveHighlightId(null); } }} className="px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-sm font-medium shadow-lg">Save Note</button>
@@ -674,20 +618,20 @@ export const Reader: React.FC<ReaderProps> = ({ book, onClose, initialLocation, 
             </div>
          )}
       </AnimatePresence>
-
-      {/* SETTINGS & TOC PANELS */}
+      
+      {/* SIDE PANELS (Mobile Full Screen, Desktop Sidebar) */}
        <AnimatePresence>
         {showTOC && isEpub && (
            <>
              <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={() => setShowTOC(false)} className="fixed inset-0 bg-black/40 z-40 backdrop-blur-[1px]" />
-             <motion.div initial={{ x: -300 }} animate={{ x: 0 }} exit={{ x: -300 }} className={`fixed top-0 left-0 bottom-0 w-72 ${theme.ui} backdrop-blur-xl border-r ${theme.border} z-50 flex flex-col shadow-2xl`}>
-                <div className="p-4 border-b border-current/10 flex items-center justify-between"><h2 className="font-bold">Contents</h2><button onClick={() => setShowTOC(false)}><X className="w-5 h-5" /></button></div>
+             <motion.div initial={{ x: -300 }} animate={{ x: 0 }} exit={{ x: -300 }} className={`fixed top-0 left-0 bottom-0 w-full md:w-72 ${theme.ui} backdrop-blur-xl border-r ${theme.border} z-50 flex flex-col shadow-2xl`}>
+                <div className="p-4 border-b border-current/10 flex items-center justify-between"><h2 className="font-bold">Contents</h2><button onClick={() => setShowTOC(false)} className="p-2"><X className="w-6 h-6" /></button></div>
                 <div className="flex-1 overflow-y-auto p-4 space-y-2">
                    {toc.map((item, i) => (
                       <div key={i}>
-                         <button onClick={() => { epubRendition?.display(item.href); setShowTOC(false); }} className="text-left text-sm py-2 hover:text-blue-500 transition-colors opacity-80 hover:opacity-100">{item.label.trim() || "Chapter " + (i+1)}</button>
+                         <button onClick={() => { epubRendition?.display(item.href); setShowTOC(false); }} className="text-left text-base md:text-sm py-3 md:py-2 hover:text-blue-500 transition-colors opacity-80 hover:opacity-100 block w-full">{item.label.trim() || "Chapter " + (i+1)}</button>
                          {item.subitems?.map((sub, j) => (
-                            <button key={j} onClick={() => { epubRendition?.display(sub.href); setShowTOC(false); }} className="text-left block text-xs py-1.5 pl-4 hover:text-blue-500 transition-colors opacity-60 hover:opacity-100">{sub.label.trim()}</button>
+                            <button key={j} onClick={() => { epubRendition?.display(sub.href); setShowTOC(false); }} className="text-left block text-sm md:text-xs py-2 pl-6 hover:text-blue-500 transition-colors opacity-60 hover:opacity-100 w-full">{sub.label.trim()}</button>
                          ))}
                       </div>
                    ))}
@@ -699,9 +643,9 @@ export const Reader: React.FC<ReaderProps> = ({ book, onClose, initialLocation, 
         {showSettings && (
           <>
             <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={() => setShowSettings(false)} className="fixed inset-0 bg-black/20 z-40 backdrop-blur-[2px]" />
-            <motion.div initial={{ x: 400 }} animate={{ x: 0 }} exit={{ x: 400 }} transition={{ type: "spring", damping: 30, stiffness: 300 }} className={`fixed top-0 right-0 bottom-0 w-80 md:w-96 ${theme.ui} backdrop-blur-xl border-l ${theme.border} shadow-2xl z-50 overflow-y-auto`}>
-               <div className="p-6">
-                 <div className="flex items-center justify-between mb-8"><h2 className="text-lg font-bold">Appearance</h2><button onClick={() => setShowSettings(false)} className="p-2 hover:bg-white/10 rounded-full"><X className="w-5 h-5" /></button></div>
+            <motion.div initial={{ x: 400 }} animate={{ x: 0 }} exit={{ x: 400 }} transition={{ type: "spring", damping: 30, stiffness: 300 }} className={`fixed top-0 right-0 bottom-0 w-full md:w-96 ${theme.ui} backdrop-blur-xl border-l ${theme.border} shadow-2xl z-50 overflow-y-auto`}>
+               <div className="p-6" onClick={(e) => e.stopPropagation()}>
+                 <div className="flex items-center justify-between mb-8"><h2 className="text-lg font-bold">Appearance</h2><button onClick={() => setShowSettings(false)} className="p-2 hover:bg-white/10 rounded-full"><X className="w-6 h-6" /></button></div>
                  <div className="mb-8">
                    <label className="text-xs font-bold uppercase tracking-wider opacity-50 mb-4 block">Theme</label>
                    <div className="grid grid-cols-5 gap-3">
@@ -717,9 +661,9 @@ export const Reader: React.FC<ReaderProps> = ({ book, onClose, initialLocation, 
                     <div className="mb-8">
                       <label className="text-xs font-bold uppercase tracking-wider opacity-50 mb-4 block">Zoom</label>
                       <div className="flex items-center gap-4 bg-black/10 p-3 rounded-xl">
-                        <button onClick={() => { const newScale = Math.max(0.5, Math.min(3.0, (settings.pdfScale || 1.0) - 0.25)); setSettings({ ...settings, pdfScale: newScale }); }} className="p-2 hover:bg-white/10 rounded-full"><ZoomOut className="w-5 h-5" /></button>
+                        <button onClick={() => { const newScale = Math.max(0.5, Math.min(3.0, (settings.pdfScale || 1.0) - 0.25)); setSettings({ ...settings, pdfScale: newScale }); }} className="p-3 md:p-2 hover:bg-white/10 rounded-full"><ZoomOut className="w-6 h-6" /></button>
                         <div className="flex-1 text-center font-mono font-bold text-lg">{Math.round((settings.pdfScale || 1.0) * 100)}%</div>
-                        <button onClick={() => { const newScale = Math.max(0.5, Math.min(3.0, (settings.pdfScale || 1.0) + 0.25)); setSettings({ ...settings, pdfScale: newScale }); }} className="p-2 hover:bg-white/10 rounded-full"><ZoomIn className="w-5 h-5" /></button>
+                        <button onClick={() => { const newScale = Math.max(0.5, Math.min(3.0, (settings.pdfScale || 1.0) + 0.25)); setSettings({ ...settings, pdfScale: newScale }); }} className="p-3 md:p-2 hover:bg-white/10 rounded-full"><ZoomIn className="w-6 h-6" /></button>
                       </div>
                     </div>
                  ) : (
@@ -727,7 +671,7 @@ export const Reader: React.FC<ReaderProps> = ({ book, onClose, initialLocation, 
                     <label className="text-xs font-bold uppercase tracking-wider opacity-50 mb-4 block">Typography</label>
                     <div className="flex bg-black/10 p-1 rounded-lg mb-4">
                        {['sans', 'serif', 'mono'].map((f) => (
-                         <button key={f} onClick={() => setSettings({...settings, fontFamily: f as any})} className={`flex-1 py-2 text-sm rounded-md transition-all ${settings.fontFamily === f ? 'bg-white text-black shadow-sm font-bold' : 'text-current opacity-60 hover:opacity-100'}`}>{f}</button>
+                         <button key={f} onClick={() => setSettings({...settings, fontFamily: f as any})} className={`flex-1 py-3 md:py-2 text-sm rounded-md transition-all ${settings.fontFamily === f ? 'bg-white text-black shadow-sm font-bold' : 'text-current opacity-60 hover:opacity-100'}`}>{f}</button>
                        ))}
                     </div>
                     <div className="space-y-6">
@@ -743,9 +687,9 @@ export const Reader: React.FC<ReaderProps> = ({ book, onClose, initialLocation, 
         {showBookmarksPanel && (
           <>
             <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={() => setShowBookmarksPanel(false)} className="fixed inset-0 bg-black/20 z-40 backdrop-blur-[2px]" />
-            <motion.div initial={{ x: 400 }} animate={{ x: 0 }} exit={{ x: 400 }} transition={{ type: "spring", damping: 30, stiffness: 300 }} className={`fixed top-0 right-0 bottom-0 w-80 md:w-96 ${theme.ui} backdrop-blur-xl border-l ${theme.border} shadow-2xl z-50 overflow-y-auto flex flex-col`}>
-               <div className="p-6 border-b border-current/10 flex items-center justify-between"><h2 className="text-lg font-bold">Bookmarks</h2><button onClick={() => setShowBookmarksPanel(false)} className="p-2 hover:bg-white/10 rounded-full"><X className="w-5 h-5" /></button></div>
-               <div className="flex-1 overflow-y-auto p-4 space-y-3">
+            <motion.div initial={{ x: 400 }} animate={{ x: 0 }} exit={{ x: 400 }} transition={{ type: "spring", damping: 30, stiffness: 300 }} className={`fixed top-0 right-0 bottom-0 w-full md:w-96 ${theme.ui} backdrop-blur-xl border-l ${theme.border} shadow-2xl z-50 overflow-y-auto flex flex-col`}>
+               <div className="p-6 border-b border-current/10 flex items-center justify-between"><h2 className="text-lg font-bold">Bookmarks</h2><button onClick={() => setShowBookmarksPanel(false)} className="p-2 hover:bg-white/10 rounded-full"><X className="w-6 h-6" /></button></div>
+               <div className="flex-1 overflow-y-auto p-4 space-y-3" onClick={(e) => e.stopPropagation()}>
                   {bookmarks?.length === 0 && (
                      <div className="text-center py-12 opacity-50">
                         <BookmarkIcon className="w-12 h-12 mx-auto mb-4 stroke-1" />
@@ -757,7 +701,7 @@ export const Reader: React.FC<ReaderProps> = ({ book, onClose, initialLocation, 
                         key={b.id}
                         layout
                         initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}
-                        className="group relative bg-black/5 hover:bg-black/10 rounded-xl p-3 cursor-pointer transition-colors overflow-hidden"
+                        className="group relative bg-black/5 hover:bg-black/10 rounded-xl p-4 md:p-3 cursor-pointer transition-colors overflow-hidden"
                         onClick={() => handleJumpToBookmark(b)}
                      >
                         <div className="flex gap-3">
@@ -773,7 +717,7 @@ export const Reader: React.FC<ReaderProps> = ({ book, onClose, initialLocation, 
                               <p className="text-sm opacity-80 line-clamp-3 font-serif leading-snug">{b.textSnippet || "No preview text"}</p>
                            </div>
                         </div>
-                        <button onClick={(e) => { e.stopPropagation(); deleteBookmark(b.id); }} className="absolute top-2 right-2 p-1.5 bg-red-500 text-white rounded-full opacity-0 group-hover:opacity-100 transition-opacity transform translate-x-2 group-hover:translate-x-0"><Trash2 className="w-3 h-3" /></button>
+                        <button onClick={(e) => { e.stopPropagation(); deleteBookmark(b.id); }} className="absolute top-2 right-2 p-2 md:p-1.5 bg-red-500 text-white rounded-full opacity-100 md:opacity-0 group-hover:opacity-100 transition-opacity transform md:translate-x-2 group-hover:translate-x-0"><Trash2 className="w-4 h-4 md:w-3 md:h-3" /></button>
                      </motion.div>
                   ))}
                </div>
@@ -782,46 +726,36 @@ export const Reader: React.FC<ReaderProps> = ({ book, onClose, initialLocation, 
         )}
       </AnimatePresence>
 
-
       {/* MAIN RENDERER AREA */}
-      <div className={`w-full h-screen transition-all duration-300 ease-in-out flex flex-col items-center ${!isPdf && !isEpub ? 'pt-24 pb-32 px-4 overflow-y-auto' : 'overflow-hidden'}`}>
+      <div className={`w-full h-full transition-all duration-300 ease-in-out flex flex-col items-center ${!isPdf && !isEpub ? 'pt-24 pb-32 px-4 overflow-y-auto' : ''}`}>
+         
          {/* PDF CANVAS */}
-         {isPdf && (
-           <div className="flex flex-col items-center justify-center w-full h-full pt-16 pb-20 overflow-auto relative bg-[#0a0a0a]">
-             <div className={`relative shadow-2xl transition-all duration-300 ${settings.theme === 'night' ? 'brightness-90 sepia-[.1]' : ''} ${settings.theme === 'sepia' ? 'sepia-[.3]' : ''}`}>
-                <canvas ref={canvasRef} className="max-w-full h-auto rounded-sm block" />
-                <div ref={textLayerRef} className="textLayer" />
-                <div ref={highlightLayerRef} className="absolute inset-0 pointer-events-none">
-                   {highlights?.filter(h => h.page === pdfPageNum).map(hl => (
-                      <div key={hl.id}>
-                        {hl.rects?.map((r, i) => (
-                          <div 
-                             key={i}
-                             className={`absolute ${HIGHLIGHT_COLORS.find(c=>c.id===hl.color)?.class || 'bg-yellow-300/30'} cursor-pointer pointer-events-auto hover:brightness-110 transition-all`}
-                             style={{ left: `${r.x * 100}%`, top: `${r.y * 100}%`, width: `${r.w * 100}%`, height: `${r.h * 100}%` }}
-                             onClick={(e) => {
-                                e.stopPropagation();
-                                setActiveHighlightId(hl.id);
-                                const rect = (e.target as HTMLElement).getBoundingClientRect();
-                                setSelectionMenu({ x: rect.left + rect.width/2, y: rect.top - 10, text: hl.text });
-                             }}
-                          />
-                        ))}
-                      </div>
-                   ))}
-                </div>
-                {pdfRendering && (
-                  <div className="absolute inset-0 flex items-center justify-center bg-black/10 backdrop-blur-[2px]">
-                    <div className="w-8 h-8 border-2 border-blue-500 border-t-transparent rounded-full animate-spin"></div>
-                  </div>
-                )}
-             </div>
+         {isPdf && pdfDoc && (
+           <div className="w-full h-full overflow-y-auto overflow-x-hidden flex flex-col items-center scroll-smooth pt-20 pb-24 bg-[#0a0a0a]">
+              {Array.from({ length: numPages }, (_, i) => i + 1).map(pageNum => (
+                 <PdfPage 
+                   key={pageNum}
+                   pageNum={pageNum}
+                   pdfDoc={pdfDoc}
+                   scale={settings.pdfScale || 1.0}
+                   onInView={handlePdfPageInView}
+                   highlights={highlights?.filter(h => h.page === pageNum)}
+                   activeHighlightId={activeHighlightId}
+                   onHighlightClick={(id, rect, text) => {
+                      setActiveHighlightId(id);
+                      setSelectionMenu({ x: rect.left + rect.width/2, y: rect.top - 10, text });
+                   }}
+                   theme={settings.theme}
+                   setSelectionMenu={setSelectionMenu}
+                   textLayerRefRoot={containerRef}
+                 />
+              ))}
            </div>
          )}
 
          {/* EPUB CONTAINER */}
          {isEpub && (
-            <div className="w-full h-full pt-16 pb-16 flex justify-center relative">
+            <div className="w-full h-full pt-16 pb-24 flex justify-center relative">
                <div ref={epubContainerRef} className="w-full h-full max-w-4xl px-2 md:px-12" style={{ opacity: epubReady ? 1 : 0, transition: 'opacity 0.5s' }} />
                {!epubReady && <div className="absolute inset-0 flex items-center justify-center"><div className="w-8 h-8 border-2 border-blue-500 border-t-transparent rounded-full animate-spin"></div></div>}
             </div>
@@ -831,8 +765,8 @@ export const Reader: React.FC<ReaderProps> = ({ book, onClose, initialLocation, 
          {!isPdf && !isEpub && (
            <div ref={contentRef} className={`${settings.fontFamily === 'sans' ? 'font-sans' : settings.fontFamily === 'serif' ? 'font-serif' : 'font-mono'} ${settings.margin === 'narrow' ? 'max-w-[600px]' : settings.margin === 'normal' ? 'max-w-[800px]' : 'max-w-[1000px]'} w-full`} style={{ fontSize: `${settings.fontSize}px`, lineHeight: settings.lineHeight, textAlign: settings.textAlign }}>
              <div className="mb-24 text-center border-b border-current/10 pb-12">
-                <h1 className="text-4xl md:text-6xl font-bold mb-6 leading-tight tracking-tight">{book.title}</h1>
-                <p className="text-xl opacity-60 font-serif italic">{book.author}</p>
+                <h1 className="text-3xl md:text-6xl font-bold mb-4 md:mb-6 leading-tight tracking-tight">{book.title}</h1>
+                <p className="text-lg md:text-xl opacity-60 font-serif italic">{book.author}</p>
              </div>
              <div className="whitespace-pre-wrap relative">{book.content || "Content unavailable."}</div>
            </div>
@@ -843,11 +777,20 @@ export const Reader: React.FC<ReaderProps> = ({ book, onClose, initialLocation, 
       <motion.div 
         initial={{ y: 100 }}
         animate={{ y: showControls ? 0 : 100 }}
-        className={`fixed bottom-0 left-0 right-0 h-20 ${theme.ui} backdrop-blur-lg border-t ${theme.border} z-40 flex items-center justify-center px-4 shadow-[0_-10px_30px_rgba(0,0,0,0.1)]`}
+        transition={{ duration: 0.3, ease: 'easeInOut' }}
+        className={`absolute bottom-0 left-0 right-0 h-20 ${theme.ui} backdrop-blur-lg border-t ${theme.border} z-40 flex items-center justify-center px-4 shadow-[0_-10px_30px_rgba(0,0,0,0.1)]`}
+        onClick={(e) => e.stopPropagation()}
       >
         <div className="w-full max-w-3xl flex items-center justify-between gap-4">
            <button 
-              onClick={() => isPdf ? changePdfPage(-1) : isEpub ? epubRendition?.prev() : null}
+              onClick={() => {
+                 if (isPdf) {
+                    const prevPage = Math.max(1, pdfPageNum - 1);
+                    document.getElementById(`pdf-page-${prevPage}`)?.scrollIntoView({ behavior: 'smooth' });
+                 } else if (isEpub) {
+                    epubRendition?.prev();
+                 }
+              }}
               disabled={isPdf && pdfPageNum <= 1}
               className="p-3 rounded-full hover:bg-current/5 disabled:opacity-30 transition-all"
            >
@@ -859,7 +802,7 @@ export const Reader: React.FC<ReaderProps> = ({ book, onClose, initialLocation, 
                <div className="text-sm font-bold font-mono mb-2 opacity-60 group-hover:opacity-100 transition-opacity">
                  {isPdf ? `Page ${pdfPageNum} of ${numPages}` : `${Math.round(book.progress)}%`}
                </div>
-               <div className="relative w-full h-1.5 bg-current/10 rounded-full hover:h-2 transition-all cursor-pointer">
+               <div className="relative w-full h-1.5 bg-current/10 rounded-full hover:h-2 transition-all cursor-pointer touch-none">
                   <div 
                     className="h-full bg-blue-500 rounded-full transition-all duration-300 relative z-10" 
                     style={{ width: isPdf ? `${(pdfPageNum / numPages) * 100}%` : `${book.progress}%` }} 
@@ -882,7 +825,14 @@ export const Reader: React.FC<ReaderProps> = ({ book, onClose, initialLocation, 
            </div>
            
            <button 
-              onClick={() => isPdf ? changePdfPage(1) : isEpub ? epubRendition?.next() : null}
+              onClick={() => {
+                 if (isPdf) {
+                    const nextPage = Math.min(numPages, pdfPageNum + 1);
+                    document.getElementById(`pdf-page-${nextPage}`)?.scrollIntoView({ behavior: 'smooth' });
+                 } else if (isEpub) {
+                    epubRendition?.next();
+                 }
+              }}
               disabled={isPdf && pdfPageNum >= numPages}
               className="p-3 rounded-full hover:bg-current/5 disabled:opacity-30 transition-all"
            >
@@ -890,6 +840,195 @@ export const Reader: React.FC<ReaderProps> = ({ book, onClose, initialLocation, 
            </button>
         </div>
       </motion.div>
+    </div>
+  );
+};
+
+// PDF Page component with continuous scroll support
+const PdfPage: React.FC<{
+  pageNum: number;
+  pdfDoc: any;
+  scale: number;
+  onInView: (page: number) => void;
+  highlights?: Highlight[];
+  activeHighlightId: string | null;
+  onHighlightClick: (id: string, rect: DOMRect, text: string) => void;
+  theme: string;
+  setSelectionMenu: (menu: any) => void;
+  textLayerRefRoot: React.RefObject<HTMLElement>;
+}> = ({ pageNum, pdfDoc, scale, onInView, highlights, activeHighlightId, onHighlightClick, theme, setSelectionMenu, textLayerRefRoot }) => {
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const textLayerRef = useRef<HTMLDivElement>(null);
+  const [rendered, setRendered] = useState(false);
+  const [dimensions, setDimensions] = useState({ width: 600, height: 800 });
+  const renderTaskRef = useRef<any>(null);
+  
+  const ref = useRef<HTMLDivElement>(null);
+  const isInView = useInView(ref, { margin: "200px 0px 200px 0px", amount: 0.1 });
+  const isActiveInView = useInView(ref, { margin: "-40% 0px -40% 0px" });
+  
+  useEffect(() => {
+     if (isActiveInView) {
+        onInView(pageNum);
+     }
+  }, [isActiveInView, pageNum]);
+
+  // Reset rendered state on scale change to force re-render
+  useEffect(() => {
+     setRendered(false);
+  }, [scale]);
+
+  useEffect(() => {
+     if (!pdfDoc) return;
+     let isCancelled = false;
+
+     pdfDoc.getPage(pageNum).then((page: any) => {
+        if (isCancelled) return;
+        const viewport = page.getViewport({ scale: scale });
+        setDimensions({ width: viewport.width, height: viewport.height });
+     });
+     
+     return () => { isCancelled = true; };
+  }, [pdfDoc, pageNum, scale]);
+
+  useEffect(() => {
+     let isMounted = true;
+
+     if (isInView && !rendered && pdfDoc && dimensions.width > 0) {
+        const render = async () => {
+           try {
+              // Cancel any existing render task
+              if (renderTaskRef.current) {
+                 try {
+                   await renderTaskRef.current.cancel();
+                 } catch (e) { /* ignore */ }
+                 renderTaskRef.current = null;
+              }
+
+              const page = await pdfDoc.getPage(pageNum);
+              if (!isMounted) return;
+              
+              const viewport = page.getViewport({ scale: scale });
+              const canvas = canvasRef.current;
+              
+              if (canvas) {
+                 const context = canvas.getContext('2d');
+                 if (context) {
+                     canvas.width = viewport.width;
+                     canvas.height = viewport.height;
+                     
+                     const renderTask = page.render({ canvasContext: context, viewport });
+                     renderTaskRef.current = renderTask;
+                     
+                     await renderTask.promise;
+                     renderTaskRef.current = null;
+                     
+                     if (isMounted && textLayerRef.current) {
+                        textLayerRef.current.innerHTML = '';
+                        textLayerRef.current.style.setProperty('--scale-factor', `${scale}`);
+                        try {
+                           const textContent = await page.getTextContent();
+                           window.pdfjsLib.renderTextLayer({
+                              textContentSource: textContent,
+                              container: textLayerRef.current,
+                              viewport: viewport,
+                              textDivs: []
+                           });
+                        } catch(e) { console.error("Text layer render error", e); }
+                     }
+                     
+                     if (isMounted) setRendered(true);
+                 }
+              }
+           } catch (e: any) {
+              if (e.name !== 'RenderingCancelledException') {
+                 console.error(`Error rendering page ${pageNum}`, e);
+              }
+           }
+        };
+        render();
+     }
+
+     return () => {
+         isMounted = false;
+         if (renderTaskRef.current) {
+             try {
+                 renderTaskRef.current.cancel(); // Removed invalid .catch()
+             } catch(e) { /* ignore */ }
+         }
+     };
+  }, [isInView, rendered, pdfDoc, pageNum, scale, dimensions]);
+
+  const handleMouseUp = useCallback(() => {
+    if (!textLayerRef.current) return;
+    const selection = window.getSelection();
+    if (!selection || selection.isCollapsed) return;
+    if (!textLayerRef.current.contains(selection.anchorNode)) return;
+
+    const range = selection.getRangeAt(0);
+    const layerRect = textLayerRef.current.getBoundingClientRect();
+    const rect = range.getBoundingClientRect();
+
+    const clientRects = Array.from(range.getClientRects());
+    const relativeRects = clientRects.map(r => ({
+       x: (r.left - layerRect.left) / layerRect.width,
+       y: (r.top - layerRect.top) / layerRect.height,
+       w: r.width / layerRect.width,
+       h: r.height / layerRect.height
+    }));
+
+    setSelectionMenu({
+       x: rect.left + rect.width / 2,
+       y: rect.top - 10,
+       text: selection.toString(),
+       rects: relativeRects
+    });
+  }, [setSelectionMenu]);
+
+  return (
+    <div 
+      id={`pdf-page-${pageNum}`}
+      ref={ref}
+      className="relative my-2 md:my-4 shadow-2xl bg-white transition-all duration-300 origin-top"
+      style={{ 
+         width: dimensions.width, 
+         height: dimensions.height,
+         filter: theme === 'night' ? 'brightness(0.8) contrast(1.2)' : theme === 'sepia' ? 'sepia(0.3)' : 'none'
+      }}
+      onMouseUp={handleMouseUp}
+    >
+       {!rendered && (
+          <div className="absolute inset-0 flex items-center justify-center bg-white/5">
+             <div className="w-8 h-8 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
+          </div>
+       )}
+       
+       <canvas ref={canvasRef} className="block w-full h-full" />
+       
+       <div ref={textLayerRef} className="textLayer absolute inset-0" />
+       
+       <div className="absolute inset-0 pointer-events-none">
+          {highlights?.map(hl => (
+             <div key={hl.id}>
+               {hl.rects?.map((r, i) => (
+                 <motion.div 
+                    key={i}
+                    initial={{ opacity: 0, scale: 1.5 }} animate={{ opacity: 1, scale: 1 }}
+                    className={`absolute ${HIGHLIGHT_COLORS.find(c=>c.id===hl.color)?.class || 'bg-yellow-300/30'} cursor-pointer pointer-events-auto hover:brightness-110 transition-all`}
+                    style={{ left: `${r.x * 100}%`, top: `${r.y * 100}%`, width: `${r.w * 100}%`, height: `${r.h * 100}%` }}
+                    onClick={(e) => {
+                       e.stopPropagation();
+                       onHighlightClick(hl.id, (e.target as HTMLElement).getBoundingClientRect(), hl.text);
+                    }}
+                 />
+               ))}
+             </div>
+          ))}
+       </div>
+       
+       <div className="absolute bottom-[-25px] right-0 text-xs text-zinc-500 font-mono">
+          Page {pageNum}
+       </div>
     </div>
   );
 };

@@ -140,19 +140,19 @@ export const StatsView: React.FC = () => {
   );
 
   return (
-    <div className="min-h-screen bg-[#0a0a0a] text-white pb-20">
+    <div className="min-h-screen bg-[#0a0a0a] text-white pb-32 md:pb-20">
       {/* Header */}
-      <div className="glass border-b border-white/5 px-6 py-8 mb-8">
+      <div className="glass border-b border-white/5 px-4 md:px-6 py-6 md:py-8 mb-8">
         <div className="max-w-7xl mx-auto">
-           <h1 className="text-3xl font-bold mb-2">Insights</h1>
-           <p className="text-zinc-400">Track your reading journey and habits.</p>
+           <h1 className="text-2xl md:text-3xl font-bold mb-2">Insights</h1>
+           <p className="text-sm md:text-base text-zinc-400">Track your reading journey and habits.</p>
         </div>
       </div>
 
-      <div className="max-w-7xl mx-auto px-6 space-y-8">
+      <div className="max-w-7xl mx-auto px-4 md:px-6 space-y-6 md:space-y-8">
          
          {/* Overview Cards */}
-         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 md:gap-6">
             <StatsCard 
               icon={BookOpen} label="Total Books" value={stats.totalBooks} 
               subValue={`${stats.finishedBooks} finished`} color="text-blue-400" 
@@ -172,12 +172,12 @@ export const StatsView: React.FC = () => {
          </div>
 
          {/* Activity Heatmap */}
-         <div className="bg-[#111] border border-white/5 rounded-2xl p-6">
+         <div className="bg-[#111] border border-white/5 rounded-2xl p-4 md:p-6 overflow-hidden">
             <div className="flex items-center justify-between mb-6">
                <h3 className="font-bold text-lg flex items-center gap-2">
                   <Calendar className="w-5 h-5 text-zinc-400" /> Reading Activity
                </h3>
-               <div className="flex items-center gap-2 text-xs text-zinc-500">
+               <div className="hidden sm:flex items-center gap-2 text-xs text-zinc-500">
                   <span>Less</span>
                   <div className="flex gap-1">
                      <div className="w-3 h-3 rounded-sm bg-white/5" />
@@ -189,11 +189,11 @@ export const StatsView: React.FC = () => {
                   <span>More</span>
                </div>
             </div>
-            <div className="flex flex-wrap gap-1">
+            <div className="flex flex-wrap gap-1 justify-center md:justify-start">
                {stats.heatmapData.map((day, i) => (
                   <div 
                      key={i}
-                     className={`w-3 h-3 rounded-sm ${getIntensityClass(day.intensity)}`}
+                     className={`w-2 h-2 md:w-3 md:h-3 rounded-sm ${getIntensityClass(day.intensity)}`}
                      title={`${day.date}: ${day.count} sessions`}
                   />
                ))}
@@ -201,20 +201,20 @@ export const StatsView: React.FC = () => {
          </div>
 
          {/* Charts & Insights Row */}
-         <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 md:gap-8">
             {/* Recent Activity Chart */}
-            <div className="lg:col-span-2 bg-[#111] border border-white/5 rounded-2xl p-6">
+            <div className="lg:col-span-2 bg-[#111] border border-white/5 rounded-2xl p-4 md:p-6">
                <h3 className="font-bold text-lg mb-6 flex items-center gap-2">
                   <TrendingUp className="w-5 h-5 text-zinc-400" /> Last 30 Days (Minutes)
                </h3>
-               <div className="h-48 flex items-end justify-between gap-2">
+               <div className="h-40 md:h-48 flex items-end justify-between gap-1 md:gap-2">
                   {stats.last30Days.map((day, i) => (
                      <div key={i} className="flex-1 flex flex-col items-center gap-2 group">
                         <div 
                            className="w-full bg-blue-500/20 rounded-t-sm transition-all duration-500 group-hover:bg-blue-500/50 relative"
                            style={{ height: `${Math.max(5, Math.min(100, (day.value / 120) * 100))}%` }}
                         >
-                           <div className="absolute -top-8 left-1/2 -translate-x-1/2 bg-black border border-white/10 px-2 py-1 rounded text-xs text-white opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none whitespace-nowrap z-10">
+                           <div className="absolute -top-8 left-1/2 -translate-x-1/2 bg-black border border-white/10 px-2 py-1 rounded text-xs text-white opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none whitespace-nowrap z-10 hidden md:block">
                               {day.value} mins
                            </div>
                         </div>
@@ -228,7 +228,7 @@ export const StatsView: React.FC = () => {
             </div>
 
             {/* Smart Insights */}
-            <div className="bg-[#111] border border-white/5 rounded-2xl p-6">
+            <div className="bg-[#111] border border-white/5 rounded-2xl p-4 md:p-6">
                <h3 className="font-bold text-lg mb-6 flex items-center gap-2">
                   <Lightbulb className="w-5 h-5 text-yellow-500" /> Smart Insights
                </h3>
@@ -249,7 +249,7 @@ export const StatsView: React.FC = () => {
          </div>
 
          {/* Badges / Achievements */}
-         <div className="bg-[#111] border border-white/5 rounded-2xl p-6 mb-12">
+         <div className="bg-[#111] border border-white/5 rounded-2xl p-4 md:p-6 mb-12">
             <h3 className="font-bold text-lg mb-6 flex items-center gap-2">
                <Award className="w-5 h-5 text-zinc-400" /> Achievements
             </h3>

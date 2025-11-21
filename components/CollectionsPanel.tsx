@@ -79,7 +79,6 @@ export const CollectionsPanel: React.FC<CollectionsPanelProps> = ({
     const bookId = e.dataTransfer.getData('bookId');
     if (bookId && collectionId) {
       await toggleBookInCollection(bookId, collectionId);
-      // Optional: Show toast handled in Library or here
     }
   };
 
@@ -111,12 +110,12 @@ export const CollectionsPanel: React.FC<CollectionsPanelProps> = ({
             animate={{ x: 0 }} 
             exit={{ x: -320 }} 
             transition={{ type: 'spring', stiffness: 300, damping: 30 }}
-            className="fixed top-0 left-0 bottom-0 w-80 bg-[#0a0a0a]/95 backdrop-blur-xl border-r border-white/10 z-50 shadow-2xl flex flex-col"
+            className="fixed top-0 left-0 bottom-0 w-full md:w-80 bg-[#0a0a0a]/95 backdrop-blur-xl border-r border-white/10 z-50 shadow-2xl flex flex-col"
           >
             <div className="p-6 border-b border-white/5 flex items-center justify-between">
               <h2 className="text-xl font-bold">Collections</h2>
-              <button onClick={onClose} className="p-2 hover:bg-white/10 rounded-full">
-                <X className="w-5 h-5" />
+              <button onClick={onClose} className="p-3 md:p-2 hover:bg-white/10 rounded-full">
+                <X className="w-6 h-6" />
               </button>
             </div>
 
@@ -128,13 +127,13 @@ export const CollectionsPanel: React.FC<CollectionsPanelProps> = ({
                   <button
                     key={item.id}
                     onClick={() => { onSelectCollection(item.id === 'all' ? null : item.id); onClose(); }}
-                    className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all text-sm font-medium ${
+                    className={`w-full flex items-center gap-3 px-3 py-3 md:py-2.5 rounded-lg transition-all text-sm font-medium ${
                       (activeCollectionId === item.id) || (item.id === 'all' && !activeCollectionId) 
                         ? 'bg-blue-500/10 text-blue-400 border border-blue-500/20' 
                         : 'text-zinc-400 hover:text-white hover:bg-white/5 border border-transparent'
                     }`}
                   >
-                    <item.icon className={`w-4 h-4 ${item.color}`} />
+                    <item.icon className={`w-5 h-5 md:w-4 md:h-4 ${item.color}`} />
                     {item.label}
                   </button>
                 ))}
@@ -146,7 +145,7 @@ export const CollectionsPanel: React.FC<CollectionsPanelProps> = ({
                   <h3 className="text-xs font-bold text-zinc-500 uppercase tracking-wider">Your Shelves</h3>
                   <button 
                     onClick={() => setShowCreateModal(true)}
-                    className="text-xs bg-white/5 hover:bg-white/10 px-2 py-1 rounded text-white flex items-center gap-1 transition-colors"
+                    className="text-xs bg-white/5 hover:bg-white/10 px-3 py-1.5 rounded-full text-white flex items-center gap-1 transition-colors"
                   >
                     <Plus className="w-3 h-3" /> New
                   </button>
@@ -185,9 +184,9 @@ export const CollectionsPanel: React.FC<CollectionsPanelProps> = ({
                     {/* Actions */}
                     <button 
                       onClick={(e) => handleDelete(collection.id, e)}
-                      className="p-1.5 rounded-md hover:bg-red-500/20 text-zinc-600 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-all"
+                      className="p-2 md:p-1.5 rounded-md hover:bg-red-500/20 text-zinc-600 hover:text-red-400 opacity-100 md:opacity-0 group-hover:opacity-100 transition-all"
                     >
-                      <Trash2 className="w-3.5 h-3.5" />
+                      <Trash2 className="w-4 h-4 md:w-3.5 md:h-3.5" />
                     </button>
                   </motion.div>
                 ))}
@@ -217,7 +216,7 @@ export const CollectionsPanel: React.FC<CollectionsPanelProps> = ({
                         type="text" 
                         value={newName} 
                         onChange={(e) => setNewName(e.target.value)}
-                        className="w-full bg-white/5 border border-white/10 rounded-lg px-4 py-2 text-white focus:ring-2 focus:ring-blue-500 outline-none"
+                        className="w-full bg-white/5 border border-white/10 rounded-lg px-4 py-3 md:py-2 text-white focus:ring-2 focus:ring-blue-500 outline-none"
                         placeholder="e.g., Sci-Fi, Favorites"
                         autoFocus
                       />
@@ -225,12 +224,12 @@ export const CollectionsPanel: React.FC<CollectionsPanelProps> = ({
 
                     <div>
                       <label className="block text-xs font-bold text-zinc-500 uppercase mb-2">Color</label>
-                      <div className="grid grid-cols-5 gap-2">
+                      <div className="grid grid-cols-5 gap-3 md:gap-2">
                         {GRADIENTS.map((g) => (
                           <button
                             key={g}
                             onClick={() => setNewColor(g)}
-                            className={`w-8 h-8 rounded-full bg-gradient-to-br ${g} ring-2 transition-all ${newColor === g ? 'ring-white scale-110' : 'ring-transparent hover:scale-105'}`}
+                            className={`w-10 h-10 md:w-8 md:h-8 rounded-full bg-gradient-to-br ${g} ring-2 transition-all ${newColor === g ? 'ring-white scale-110' : 'ring-transparent hover:scale-105'}`}
                           />
                         ))}
                       </div>
@@ -238,14 +237,14 @@ export const CollectionsPanel: React.FC<CollectionsPanelProps> = ({
 
                     <div>
                        <label className="block text-xs font-bold text-zinc-500 uppercase mb-2">Icon</label>
-                       <div className="flex flex-wrap gap-2 h-32 overflow-y-auto custom-scrollbar p-1">
+                       <div className="flex flex-wrap gap-3 md:gap-2 h-32 overflow-y-auto custom-scrollbar p-1">
                           {ICONS.map((item: any, i) => (
                              <button 
                                 key={i} 
-                                onClick={() => setNewIcon(item.char || 'icon')} // simplified logic
-                                className={`w-8 h-8 rounded flex items-center justify-center text-lg hover:bg-white/10 transition-colors ${newIcon === (item.char || 'icon') ? 'bg-white/20' : ''}`}
+                                onClick={() => setNewIcon(item.char || 'icon')}
+                                className={`w-10 h-10 md:w-8 md:h-8 rounded flex items-center justify-center text-lg hover:bg-white/10 transition-colors ${newIcon === (item.char || 'icon') ? 'bg-white/20' : ''}`}
                              >
-                                {item.char ? item.char : <item.icon className="w-4 h-4" />}
+                                {item.char ? item.char : <item.icon className="w-5 h-5 md:w-4 md:h-4" />}
                              </button>
                           ))}
                        </div>

@@ -7,7 +7,8 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { 
   Plus, Search, Grid, List as ListIcon, 
   Star, Trash2, BookOpen, Clock, Sparkles, Upload, Quote,
-  Library as LibraryIcon, MoreVertical, FolderPlus, Check, BarChart2
+  Library as LibraryIcon, MoreVertical, FolderPlus, Check, BarChart2,
+  BrainCircuit, Lock
 } from 'lucide-react';
 import { Button } from './ui/Button';
 import { QuotesView } from './QuotesView';
@@ -17,14 +18,14 @@ import { CollectionsPanel } from './CollectionsPanel';
 interface LibraryProps {
   onOpenBook: (book: Book) => void;
   onQuoteClick: (book: Book, highlight: Highlight) => void;
-  initialTab?: 'library' | 'quotes' | 'stats';
+  initialTab?: 'library' | 'quotes' | 'stats' | 'mindmaps';
 }
 
 export const Library: React.FC<LibraryProps> = ({ onOpenBook, onQuoteClick, initialTab = 'library' }) => {
   const books = useLiveQuery(() => db.books.orderBy('lastRead').reverse().toArray());
   const collections = useLiveQuery(() => db.collections.toArray());
   
-  const [activeTab, setActiveTab] = useState<'library' | 'quotes' | 'stats'>(initialTab);
+  const [activeTab, setActiveTab] = useState<'library' | 'quotes' | 'stats' | 'mindmaps'>(initialTab);
   const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
   const [searchQuery, setSearchQuery] = useState('');
   const [isDragging, setIsDragging] = useState(false);
@@ -112,7 +113,7 @@ export const Library: React.FC<LibraryProps> = ({ onOpenBook, onQuoteClick, init
 
   return (
     <div 
-      className="min-h-screen bg-[#0a0a0a] text-white relative overflow-y-auto overflow-x-hidden"
+      className="min-h-screen bg-[#0a0a0a] text-white relative overflow-y-auto overflow-x-hidden pb-24 md:pb-0"
       onDragOver={(e) => { e.preventDefault(); setIsDragging(true); }}
       onDragLeave={() => setIsDragging(false)}
       onDrop={handleDrop}
@@ -128,9 +129,11 @@ export const Library: React.FC<LibraryProps> = ({ onOpenBook, onQuoteClick, init
       />
 
       {/* Header */}
-      <header className="sticky top-0 z-30 glass border-b-0 border-white/5 px-6 py-4 md:px-12 md:py-6 transition-all duration-300">
-        <div className="max-w-7xl mx-auto flex flex-col md:flex-row justify-between items-center gap-4">
-          <div className="flex items-center gap-8 w-full md:w-auto">
+      <header className="sticky top-0 z-30 glass border-b-0 border-white/5 px-4 py-4 md:px-12 md:py-6 transition-all duration-300">
+        <div className="max-w-7xl mx-auto flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+          
+          {/* Top Row (Logo + Tabs on Desktop) */}
+          <div className="flex items-center justify-between w-full md:w-auto gap-8">
             <div className="flex items-center gap-3">
               <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center shadow-lg shadow-blue-500/20">
                 <BookOpen className="w-6 h-6 text-white" />
@@ -141,7 +144,8 @@ export const Library: React.FC<LibraryProps> = ({ onOpenBook, onQuoteClick, init
               </div>
             </div>
 
-            <div className="flex bg-white/5 rounded-lg p-1 border border-white/5 overflow-x-auto">
+            {/* Desktop Tabs - Hidden on Mobile */}
+            <div className="hidden md:flex bg-white/5 rounded-lg p-1 border border-white/5 overflow-x-auto">
                <button onClick={() => setActiveTab('library')} className={`px-4 py-1.5 rounded-md text-sm font-medium transition-all flex items-center gap-2 ${activeTab === 'library' ? 'bg-white/10 text-white shadow-sm' : 'text-zinc-500 hover:text-zinc-300'}`}>
                   <Grid className="w-4 h-4" /> Library
                </button>
@@ -151,31 +155,35 @@ export const Library: React.FC<LibraryProps> = ({ onOpenBook, onQuoteClick, init
                <button onClick={() => setActiveTab('stats')} className={`px-4 py-1.5 rounded-md text-sm font-medium transition-all flex items-center gap-2 ${activeTab === 'stats' ? 'bg-white/10 text-white shadow-sm' : 'text-zinc-500 hover:text-zinc-300'}`}>
                   <BarChart2 className="w-4 h-4" /> Insights
                </button>
+               <button onClick={() => setActiveTab('mindmaps')} className={`px-4 py-1.5 rounded-md text-sm font-medium transition-all flex items-center gap-2 ${activeTab === 'mindmaps' ? 'bg-white/10 text-white shadow-sm' : 'text-zinc-500 hover:text-zinc-300'}`}>
+                  <BrainCircuit className="w-4 h-4" /> Mindmaps
+               </button>
             </div>
           </div>
 
+          {/* Actions Toolbar - Responsive Stack */}
           {activeTab === 'library' && (
-          <>
-          <div className="flex items-center gap-3 w-full md:w-auto bg-[#1a1a1a]/50 p-1 rounded-xl border border-white/5 backdrop-blur-sm">
-             <button onClick={() => setShowCollections(true)} className={`p-2 rounded-lg text-zinc-400 hover:text-white hover:bg-white/10 transition-colors ${activeCollectionId ? 'text-blue-400' : ''}`} title="Collections">
-               <LibraryIcon className="w-5 h-5" />
-             </button>
-             <div className="w-[1px] h-6 bg-white/10 mx-1" />
-            <div className="relative flex-1 md:w-64 group">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-500 group-focus-within:text-blue-400 transition-colors" />
-              <input type="text" placeholder="Search (Press /)" value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} className="w-full bg-transparent border-none rounded-lg pl-10 pr-4 py-2 text-sm text-white placeholder-zinc-600 focus:ring-0 focus:outline-none transition-all" />
+          <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 w-full md:w-auto">
+            <div className="flex items-center gap-3 bg-[#1a1a1a]/50 p-1 rounded-xl border border-white/5 backdrop-blur-sm w-full sm:w-auto">
+               <button onClick={() => setShowCollections(true)} className={`p-3 md:p-2 rounded-lg text-zinc-400 hover:text-white hover:bg-white/10 transition-colors ${activeCollectionId ? 'text-blue-400' : ''}`} title="Collections">
+                 <LibraryIcon className="w-5 h-5" />
+               </button>
+               <div className="w-[1px] h-6 bg-white/10 mx-1" />
+              <div className="relative flex-1 sm:w-48 md:w-64 group">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-500 group-focus-within:text-blue-400 transition-colors" />
+                <input type="text" placeholder="Search..." value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} className="w-full bg-transparent border-none rounded-lg pl-10 pr-4 py-2 text-sm text-white placeholder-zinc-600 focus:ring-0 focus:outline-none transition-all h-10" />
+              </div>
+            </div>
+
+            <div className="flex items-center gap-3">
+               <div className="hidden md:flex bg-[#1a1a1a] rounded-lg border border-white/5 p-1">
+                  <button onClick={() => setViewMode('grid')} className={`p-2 rounded-md transition-all ${viewMode === 'grid' ? 'bg-white/10 text-white shadow-sm' : 'text-zinc-500 hover:text-zinc-300'}`}><Grid className="w-4 h-4" /></button>
+                  <button onClick={() => setViewMode('list')} className={`p-2 rounded-md transition-all ${viewMode === 'list' ? 'bg-white/10 text-white shadow-sm' : 'text-zinc-500 hover:text-zinc-300'}`}><ListIcon className="w-4 h-4" /></button>
+               </div>
+               <Button onClick={() => fileInputRef.current?.click()} className="w-full sm:w-auto flex-1 sm:flex-none justify-center"><Plus className="w-4 h-4 mr-2" /> Add Book</Button>
+               <input type="file" ref={fileInputRef} onChange={handleFileUpload} className="hidden" accept=".txt,.md,.epub,.pdf" />
             </div>
           </div>
-
-          <div className="flex items-center gap-3 w-full md:w-auto justify-end">
-             <div className="flex bg-[#1a1a1a] rounded-lg border border-white/5 p-1">
-                <button onClick={() => setViewMode('grid')} className={`p-2 rounded-md transition-all ${viewMode === 'grid' ? 'bg-white/10 text-white shadow-sm' : 'text-zinc-500 hover:text-zinc-300'}`}><Grid className="w-4 h-4" /></button>
-                <button onClick={() => setViewMode('list')} className={`p-2 rounded-md transition-all ${viewMode === 'list' ? 'bg-white/10 text-white shadow-sm' : 'text-zinc-500 hover:text-zinc-300'}`}><ListIcon className="w-4 h-4" /></button>
-             </div>
-             <Button onClick={() => fileInputRef.current?.click()}><Plus className="w-4 h-4 mr-2" /> Add Book</Button>
-             <input type="file" ref={fileInputRef} onChange={handleFileUpload} className="hidden" accept=".txt,.md,.epub,.pdf" />
-          </div>
-          </>
           )}
         </div>
       </header>
@@ -193,16 +201,19 @@ export const Library: React.FC<LibraryProps> = ({ onOpenBook, onQuoteClick, init
         )}
       </AnimatePresence>
 
+      {/* CONTENT VIEWS */}
       {activeTab === 'quotes' ? (
          <QuotesView onQuoteClick={handleQuoteClickLocal} />
       ) : activeTab === 'stats' ? (
          <StatsView />
+      ) : activeTab === 'mindmaps' ? (
+         <MindmapsPlaceholder />
       ) : (
-        <main className="max-w-7xl mx-auto p-6 md:p-12">
+        <main className="max-w-7xl mx-auto p-4 md:p-12 pb-32 md:pb-12">
            <AnimatePresence>
              {activeCollectionId && (
-               <motion.div initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -10 }} className="flex items-center gap-3 mb-8">
-                 <h2 className="text-2xl font-bold text-zinc-100">{activeCollectionName}</h2>
+               <motion.div initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -10 }} className="flex items-center gap-3 mb-8 px-2">
+                 <h2 className="text-xl md:text-2xl font-bold text-zinc-100">{activeCollectionName}</h2>
                  <span className="text-zinc-500 bg-white/5 px-2 py-0.5 rounded text-sm">{filteredBooks.length}</span>
                  <button onClick={() => setActiveCollectionId(null)} className="text-xs text-blue-400 hover:underline ml-2">Clear filter</button>
                </motion.div>
@@ -213,19 +224,19 @@ export const Library: React.FC<LibraryProps> = ({ onOpenBook, onQuoteClick, init
             {!books ? (
               <div className="flex items-center justify-center h-64 text-zinc-500"><Sparkles className="w-6 h-6 animate-spin mr-2" /> Loading Library...</div>
             ) : books.length === 0 ? (
-              <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="flex flex-col items-center justify-center h-[60vh] text-center">
-                <div className="w-32 h-32 bg-gradient-to-tr from-blue-500/20 to-purple-500/20 rounded-full flex items-center justify-center mb-8 border border-white/5 shadow-2xl shadow-blue-500/10">
-                    <BookOpen className="w-12 h-12 text-white/80" />
+              <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="flex flex-col items-center justify-center h-[60vh] text-center px-6">
+                <div className="w-24 h-24 md:w-32 md:h-32 bg-gradient-to-tr from-blue-500/20 to-purple-500/20 rounded-full flex items-center justify-center mb-8 border border-white/5 shadow-2xl shadow-blue-500/10">
+                    <BookOpen className="w-10 h-10 md:w-12 md:h-12 text-white/80" />
                 </div>
-                <h2 className="text-3xl font-bold text-white mb-4">Your library awaits</h2>
-                <Button size="lg" onClick={() => fileInputRef.current?.click()} className="group">
+                <h2 className="text-2xl md:text-3xl font-bold text-white mb-4">Your library awaits</h2>
+                <Button size="lg" onClick={() => fileInputRef.current?.click()} className="group w-full md:w-auto">
                     Import First Book <span className="ml-2 group-hover:translate-x-1 transition-transform">→</span>
                 </Button>
               </motion.div>
             ) : filteredBooks.length === 0 && activeCollectionId ? (
                 <div className="text-center py-20 opacity-60"><p className="text-xl">No books in this collection</p></div>
             ) : (
-              <motion.div layout className={viewMode === 'grid' ? "grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-6 md:gap-8" : "flex flex-col gap-3"}>
+              <motion.div layout className={viewMode === 'grid' ? "grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4 md:gap-8" : "flex flex-col gap-3"}>
                 {filteredBooks?.map((book, i) => (
                   <BookCard key={book.id} book={book} viewMode={viewMode} onOpen={() => onOpenBook(book)} gradient={getGradient(book.id)} index={i} />
                 ))}
@@ -234,9 +245,69 @@ export const Library: React.FC<LibraryProps> = ({ onOpenBook, onQuoteClick, init
           </AnimatePresence>
         </main>
       )}
+
+      {/* MOBILE BOTTOM NAVIGATION */}
+      <div className="md:hidden fixed bottom-0 left-0 right-0 h-[80px] pb-safe glass border-t border-white/10 z-50 flex justify-around items-center bg-[#0a0a0a]/90 backdrop-blur-xl px-2 shadow-2xl">
+         <MobileTab 
+           label="Library" 
+           icon={BookOpen} 
+           isActive={activeTab === 'library'} 
+           onClick={() => setActiveTab('library')} 
+         />
+         <MobileTab 
+           label="Quotes" 
+           icon={Quote} 
+           isActive={activeTab === 'quotes'} 
+           onClick={() => setActiveTab('quotes')} 
+         />
+         <MobileTab 
+           label="Insights" 
+           icon={BarChart2} 
+           isActive={activeTab === 'stats'} 
+           onClick={() => setActiveTab('stats')} 
+         />
+         <MobileTab 
+           label="Mindmaps" 
+           icon={BrainCircuit} 
+           isActive={activeTab === 'mindmaps'} 
+           onClick={() => setActiveTab('mindmaps')} 
+         />
+      </div>
     </div>
   );
 };
+
+const MobileTab: React.FC<{ label: string, icon: any, isActive: boolean, onClick: () => void }> = ({ label, icon: Icon, isActive, onClick }) => (
+   <button 
+      onClick={onClick} 
+      className={`flex flex-col items-center justify-center w-full h-full pt-2 pb-4 gap-1 transition-colors active:scale-95 ${isActive ? 'text-blue-400' : 'text-zinc-500 hover:text-zinc-300'}`}
+   >
+      <div className={`relative p-1.5 rounded-xl transition-all ${isActive ? 'bg-blue-500/10' : ''}`}>
+         <Icon className={`w-6 h-6 ${isActive ? 'fill-current' : ''}`} />
+         {isActive && <motion.div layoutId="activeTabIndicator" className="absolute -bottom-2 left-1/2 -translate-x-1/2 w-1 h-1 bg-blue-400 rounded-full" />}
+      </div>
+      <span className="text-[10px] font-medium tracking-wide">{label}</span>
+   </button>
+);
+
+const MindmapsPlaceholder = () => (
+   <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} className="flex flex-col items-center justify-center h-[70vh] text-center px-6">
+      <div className="w-24 h-24 bg-gradient-to-br from-purple-500/20 to-blue-500/20 rounded-full flex items-center justify-center mb-8 border border-white/5 relative overflow-hidden">
+         <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/5 to-transparent animate-[shimmer_2s_infinite] -skew-x-12" />
+         <BrainCircuit className="w-10 h-10 text-zinc-400" />
+      </div>
+      <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-blue-500/10 border border-blue-500/20 text-blue-400 text-xs font-bold uppercase tracking-wider mb-4">
+         <Lock className="w-3 h-3" /> Phase 2 Feature
+      </div>
+      <h2 className="text-3xl font-bold text-white mb-4">AI Mindmaps</h2>
+      <p className="text-zinc-400 max-w-md leading-relaxed">
+         Connect your Gemini API key to automatically generate visual knowledge graphs and connection maps from your reading material.
+      </p>
+      <Button disabled className="mt-8 opacity-50 cursor-not-allowed">
+         Coming Soon
+      </Button>
+   </motion.div>
+);
 
 const BookCard: React.FC<{ 
   book: Book; 
@@ -274,6 +345,7 @@ const BookCard: React.FC<{
 
   const handleDragStart = (e: React.DragEvent) => {
      e.dataTransfer.setData('bookId', book.id);
+     // @ts-ignore
      e.dataTransfer.effectAllowed = 'copy';
      const el = e.target as HTMLElement;
      el.style.opacity = '0.5';
@@ -308,15 +380,15 @@ const BookCard: React.FC<{
           draggable
           onDragStart={handleDragStart as any}
           onDragEnd={handleDragEnd as any}
-          className="group flex items-center gap-6 p-4 rounded-xl bg-[#1a1a1a] hover:bg-[#222] border border-white/5 hover:border-white/10 transition-all cursor-pointer shadow-sm hover:shadow-md"
+          className="group flex items-center gap-4 md:gap-6 p-3 md:p-4 rounded-xl bg-[#1a1a1a] hover:bg-[#222] border border-white/5 hover:border-white/10 transition-all cursor-pointer shadow-sm hover:shadow-md"
         >
-          <div className={`w-12 h-16 rounded bg-gradient-to-br ${gradient} shadow-lg flex-shrink-0 flex items-center justify-center`}>
-               <span className="text-[10px] font-bold text-white/50 uppercase tracking-tighter">{book.format}</span>
+          <div className={`w-10 h-14 md:w-12 md:h-16 rounded bg-gradient-to-br ${gradient} shadow-lg flex-shrink-0 flex items-center justify-center`}>
+               <span className="text-[8px] md:text-[10px] font-bold text-white/50 uppercase tracking-tighter">{book.format}</span>
           </div>
-          <div className="flex-1 min-w-0 grid grid-cols-1 md:grid-cols-3 gap-4 items-center">
+          <div className="flex-1 min-w-0 grid grid-cols-1 md:grid-cols-3 gap-2 md:gap-4 items-center">
             <div className="min-w-0">
-               <h3 className="font-medium text-zinc-100 truncate text-lg">{book.title}</h3>
-               <p className="text-sm text-zinc-500 truncate">{book.author}</p>
+               <h3 className="font-medium text-zinc-100 truncate text-base md:text-lg">{book.title}</h3>
+               <p className="text-xs md:text-sm text-zinc-500 truncate">{book.author}</p>
             </div>
             <div className="hidden md:flex flex-col gap-1.5">
               <div className="flex justify-between text-xs text-zinc-500">
@@ -328,7 +400,7 @@ const BookCard: React.FC<{
               </div>
             </div>
             <div className="flex items-center justify-end gap-2 text-zinc-500 text-sm">
-               <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+               <div className="flex gap-1 opacity-100 md:opacity-0 group-hover:opacity-100 transition-opacity">
                   <button onClick={handleToggleFav} className="p-2 hover:text-yellow-400 transition-colors">
                     <Star className={`w-4 h-4 ${book.isFavorite ? 'fill-yellow-400 text-yellow-400' : ''}`} />
                   </button>
@@ -364,22 +436,22 @@ const BookCard: React.FC<{
              <div className="absolute inset-0 bg-black/10 group-hover:bg-transparent transition-colors duration-500" />
              
              {/* 3D Spine Effect */}
-             <div className="absolute left-0 top-0 bottom-0 w-[3px] bg-white/20 z-10 shadow-[2px_0_5px_rgba(0,0,0,0.3)]" />
-             <div className="absolute left-[3px] top-0 bottom-0 w-[1px] bg-black/30 z-10" />
+             <div className="absolute left-0 top-0 bottom-0 w-[2px] md:w-[3px] bg-white/20 z-10 shadow-[2px_0_5px_rgba(0,0,0,0.3)]" />
+             <div className="absolute left-[2px] md:left-[3px] top-0 bottom-0 w-[1px] bg-black/30 z-10" />
              
-             <div className="p-4 h-full flex flex-col justify-between relative z-0">
+             <div className="p-3 md:p-4 h-full flex flex-col justify-between relative z-0">
                 <div className="text-right">
-                   <span className="text-[10px] font-bold text-white/30 border border-white/10 px-1.5 py-0.5 rounded uppercase backdrop-blur-sm">{book.format}</span>
+                   <span className="text-[9px] md:text-[10px] font-bold text-white/30 border border-white/10 px-1.5 py-0.5 rounded uppercase backdrop-blur-sm">{book.format}</span>
                 </div>
                 <div>
-                   <h3 className="font-serif text-xl text-white leading-tight line-clamp-3 drop-shadow-md">{book.title}</h3>
-                   <p className="text-xs text-white/70 mt-2 uppercase tracking-widest">{book.author}</p>
+                   <h3 className="font-serif text-lg md:text-xl text-white leading-tight line-clamp-3 drop-shadow-md">{book.title}</h3>
+                   <p className="text-[10px] md:text-xs text-white/70 mt-2 uppercase tracking-widest truncate">{book.author}</p>
                 </div>
              </div>
           </div>
   
           {/* Page Curl on Hover (CSS trick) */}
-          <div className="absolute bottom-0 right-0 w-8 h-8 bg-white/10 rounded-tl-xl opacity-0 group-hover:opacity-100 transition-opacity duration-300 backdrop-blur-sm border-t border-l border-white/20" />
+          <div className="absolute bottom-0 right-0 w-6 h-6 md:w-8 md:h-8 bg-white/10 rounded-tl-xl opacity-0 group-hover:opacity-100 transition-opacity duration-300 backdrop-blur-sm border-t border-l border-white/20" />
 
           <div className="absolute bottom-0 left-0 right-0 h-1 bg-black/50 backdrop-blur-sm">
               <div className="h-full bg-white/90 shadow-[0_0_8px_rgba(255,255,255,0.8)]" style={{ width: `${book.progress}%` }} />
@@ -391,9 +463,6 @@ const BookCard: React.FC<{
             </button>
              <button onClick={handleDelete} className="p-2 rounded-full bg-black/40 backdrop-blur-md hover:bg-red-500 text-white transition-colors shadow-lg border border-white/10">
               <Trash2 className="w-4 h-4" />
-            </button>
-            <button className="p-2 rounded-full bg-black/40 backdrop-blur-md hover:bg-blue-500 text-white transition-colors shadow-lg border border-white/10">
-              <FolderPlus className="w-4 h-4" />
             </button>
           </div>
         </motion.div>

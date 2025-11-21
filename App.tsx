@@ -15,10 +15,6 @@ export default function App() {
   const tabs = useLiveQuery(() => db.tabs.toArray()) || [];
   const [activeTabId, setActiveTabId] = useState<string | null>(null);
   
-  // Keep track of books data for open tabs
-  const activeBookId = tabs.find(t => t.id === activeTabId)?.bookId;
-  const activeBook = useLiveQuery(() => activeBookId ? db.books.get(activeBookId) : undefined, [activeBookId]);
-  
   // Map to store initialLocations for each tab to pass to Reader
   const [tabLocations, setTabLocations] = useState<Record<string, {page?: number, cfi?: string}>>({});
 
@@ -104,8 +100,7 @@ export default function App() {
          if (activeTabId) handleCloseTab(e as any, activeTabId);
       }
       
-      // Ctrl+Tab: Next Tab (Simplified)
-      // In a real browser Ctrl+Tab is hard to override, but we'll try for web app feel
+      // Ctrl+Tab would be here but difficult to override in browser
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
@@ -134,14 +129,14 @@ export default function App() {
           >
             {/* TAB BAR */}
             {tabs.length > 0 && (
-              <div className="fixed top-16 left-0 right-0 h-10 bg-black/40 backdrop-blur-md border-b border-white/5 z-[45] flex items-end px-4 gap-1 overflow-x-auto no-scrollbar">
+              <div className="fixed top-0 left-0 right-0 h-10 bg-black/80 backdrop-blur-md border-b border-white/5 z-[60] flex items-end px-4 gap-1 overflow-x-auto no-scrollbar">
                  {tabs.map(tab => (
                     <div 
                        key={tab.id}
                        onClick={() => handleSwitchTab(tab.id)}
                        className={`
                           group relative flex items-center gap-2 px-4 py-2 min-w-[120px] max-w-[200px] cursor-pointer transition-all rounded-t-lg select-none
-                          ${activeTabId === tab.id ? 'bg-[#0a0a0a] text-white shadow-[0_-2px_10px_rgba(0,0,0,0.2)]' : 'bg-white/5 text-zinc-500 hover:bg-white/10 hover:text-zinc-300'}
+                          ${activeTabId === tab.id ? 'bg-[#1a1a1a] text-white shadow-[0_-2px_10px_rgba(0,0,0,0.2)]' : 'bg-white/5 text-zinc-500 hover:bg-white/10 hover:text-zinc-300'}
                        `}
                     >
                        {/* Active Indicator Top Line */}
