@@ -1,6 +1,6 @@
 
 import Dexie, { Table } from 'dexie';
-import { Book, Highlight, Bookmark, Collection, ReadingSettings, ReadingSession, Badge } from './types';
+import { Book, Highlight, Bookmark, Collection, ReadingSettings, ReadingSession, Badge, Tab } from './types';
 
 // Helper to safely access window.ePub
 declare global {
@@ -16,17 +16,19 @@ export class LexiconDatabase extends Dexie {
   collections!: Table<Collection>;
   readingSessions!: Table<ReadingSession>;
   badges!: Table<Badge>;
+  tabs!: Table<Tab>;
   settings!: Table<{ id: string, value: ReadingSettings }>;
 
   constructor() {
     super('LexiconDB');
-    (this as any).version(3).stores({
+    (this as any).version(4).stores({
       books: 'id, title, author, dateAdded, lastRead, isFavorite, format, progress, *collectionIds',
       highlights: 'id, bookId, color, createdAt',
       bookmarks: 'id, bookId, type, timestamp, page',
       collections: 'id, name, createdAt',
       readingSessions: 'id, bookId, startTime, duration',
       badges: 'id, earnedAt',
+      tabs: 'id, bookId, lastAccessed',
       settings: 'id'
     });
   }
@@ -137,7 +139,13 @@ export const toggleFavorite = async (id: string, currentStatus: boolean | undefi
 };
 
 export const deleteBook = async (id: string) => {
-  await db.books.delete(id);
+  await db.transaction('rw', [db.books, db.highlights, db.bookmarks, db.readingSessions, db.tabs], async () => {
+    await db.books.delete(id);
+    await db.highlights.where('bookId').equals(id).delete();
+    await db.bookmarks.where('bookId').equals(id).delete();
+    await db.readingSessions.where('bookId').equals(id).delete();
+    await db.tabs.where('bookId').equals(id).delete();
+  });
 };
 
 // --- Highlights Operations ---
@@ -269,10 +277,32 @@ const unlockBadge = async (badgeId: string) => {
   const exists = await db.badges.get(badgeId);
   if (!exists) {
     await db.badges.add({ id: badgeId, earnedAt: Date.now() });
-    // Typically trigger a global toast or event here if app structure permitted
   }
 };
 
+// --- Tab Operations ---
+
+export const saveTab = async (tab: Tab) => {
+  await db.tabs.put(tab);
+};
+
+export const deleteTab = async (id: string) => {
+  await db.tabs.delete(id);
+};
+
+export const getTabs = async () => {
+  return await db.tabs.orderBy('lastAccessed').reverse().toArray();
+};
+
 function generateGradientCover(id: string, title: string): string {
-  return `gradient:${id}`; 
+  // Phase 2 Polish: More vibrant, premium gradients
+  const gradients = [
+    'linear-gradient(135deg, #4f46e5 0%, #7c3aed 100%)', // Blue to Violet
+    'linear-gradient(135deg, #db2777 0%, #9333ea 100%)', // Pink to Purple
+    'linear-gradient(135deg, #059669 0%, #0284c7 100%)', // Emerald to Sky
+    'linear-gradient(135deg, #ea580c 0%, #dc2626 100%)', // Orange to Red
+    'linear-gradient(135deg, #0f172a 0%, #334155 100%)', // Slate
+  ];
+  const index = id.charCodeAt(0) % gradients.length;
+  return `gradient:${gradients[index]}`; 
 }

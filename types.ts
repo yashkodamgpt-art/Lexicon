@@ -24,6 +24,19 @@ export interface Book {
   hasMindmap?: boolean;
 }
 
+export interface Tab {
+  id: string;
+  bookId: string;
+  title: string;
+  coverUrl?: string;
+  format: BookFormat;
+  lastAccessed: number;
+  // Persisted view state
+  page?: number;
+  cfi?: string;
+  scrollPosition?: number;
+}
+
 export interface Theme {
   id: 'day' | 'night' | 'sepia' | 'twilight' | 'console';
   name: string;

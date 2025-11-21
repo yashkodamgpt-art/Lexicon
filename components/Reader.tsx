@@ -26,6 +26,7 @@ interface ReaderProps {
   book: Book;
   onClose: () => void;
   initialLocation?: { page?: number, cfi?: string };
+  hasTabs?: boolean;
 }
 
 // Helper colors map for UI
@@ -37,7 +38,7 @@ const HIGHLIGHT_COLORS: {id: HighlightColor, hex: string, class: string}[] = [
   { id: 'red', hex: '#f87171', class: 'highlight-red' },
 ];
 
-export const Reader: React.FC<ReaderProps> = ({ book, onClose, initialLocation }) => {
+export const Reader: React.FC<ReaderProps> = ({ book, onClose, initialLocation, hasTabs = false }) => {
   const [settings, setSettings] = useState<ReadingSettings | null>(null);
   const [showControls, setShowControls] = useState(true);
   const [showSettings, setShowSettings] = useState(false);
@@ -97,6 +98,15 @@ export const Reader: React.FC<ReaderProps> = ({ book, onClose, initialLocation }
     }
   }, [settings]);
 
+  // Reset local state when book changes
+  useEffect(() => {
+    setPdfPageNum(initialLocation?.page || book.currentPage || 1);
+    setEpubReady(false);
+    setPdfDoc(null);
+    setPdfRendering(false);
+    setEpubRendition(null);
+  }, [book.id]);
+
   // Toast Helper
   const showToast = (msg: string) => {
     setToast(msg);
@@ -108,13 +118,8 @@ export const Reader: React.FC<ReaderProps> = ({ book, onClose, initialLocation }
     const now = Date.now();
     
     if (isIdle.current) {
-      // Resuming from idle
       isIdle.current = false;
       lastActivity.current = now;
-    } else {
-       // Accumulate time since last activity block if needed, but simple method:
-       // We count time as long as not idle. 
-       // Actually, better approach: On interval, check if idle. If not idle, add 1 sec to duration.
     }
     
     lastActivity.current = now;
@@ -127,7 +132,6 @@ export const Reader: React.FC<ReaderProps> = ({ book, onClose, initialLocation }
   }, []);
 
   useEffect(() => {
-     // Interval to tick duration
      const interval = setInterval(() => {
         if (!isIdle.current) {
            activeDuration.current += 1000;
@@ -149,8 +153,7 @@ export const Reader: React.FC<ReaderProps> = ({ book, onClose, initialLocation }
         window.removeEventListener('scroll', handleUserActivity);
         window.removeEventListener('touchstart', handleUserActivity);
         
-        // Log session on unmount
-        if (activeDuration.current > 5000) { // Only log if read for > 5s
+        if (activeDuration.current > 5000) { 
            logReadingSession(book.id, activeDuration.current);
         }
      };
@@ -160,15 +163,6 @@ export const Reader: React.FC<ReaderProps> = ({ book, onClose, initialLocation }
   // BOOKMARKING LOGIC
   // --------------------------------------------------------------------------
   
-  // Determine if current page/view is bookmarked
-  const isCurrentPageBookmarked = () => {
-    if (!bookmarks) return false;
-    if (book.format === 'pdf') {
-      return bookmarks.some(b => b.page === pdfPageNum);
-    }
-    return false; 
-  };
-
   const getCurrentBookmark = () => {
     if (!bookmarks) return null;
     if (book.format === 'pdf') return bookmarks.find(b => b.page === pdfPageNum);
@@ -179,28 +173,23 @@ export const Reader: React.FC<ReaderProps> = ({ book, onClose, initialLocation }
 
   const handleToggleBookmark = async (type: 'standard' | 'favorite' = 'standard') => {
     if (activeBookmark) {
-      // Remove existing
       await deleteBookmark(activeBookmark.id);
       showToast("Bookmark removed");
     } else {
-      // Create new
       let thumbnail: string | undefined;
       let textSnippet = "";
       let positionData: Partial<Bookmark> = {};
 
-      // 1. Capture Data based on format
       if (book.format === 'pdf') {
          positionData = { page: pdfPageNum, percentage: (pdfPageNum / numPages) * 100 };
          textSnippet = `Page ${pdfPageNum}`;
          
-         // Generate Thumbnail
          if (canvasRef.current) {
            try {
-             // Create a smaller canvas for thumbnail to save space
              const thumbCanvas = document.createElement('canvas');
              const ctx = thumbCanvas.getContext('2d');
              const srcCanvas = canvasRef.current;
-             const scale = 0.2; // 20% size
+             const scale = 0.2; 
              thumbCanvas.width = srcCanvas.width * scale;
              thumbCanvas.height = srcCanvas.height * scale;
              ctx?.drawImage(srcCanvas, 0, 0, thumbCanvas.width, thumbCanvas.height);
@@ -211,7 +200,6 @@ export const Reader: React.FC<ReaderProps> = ({ book, onClose, initialLocation }
          }
       } 
       else if (book.format === 'epub' && epubRendition) {
-         // Get current location
          const loc = epubRendition.currentLocation();
          if (loc && loc.start) {
             positionData = { cfi: loc.start.cfi, percentage: loc.start.percentage * 100 };
@@ -224,8 +212,7 @@ export const Reader: React.FC<ReaderProps> = ({ book, onClose, initialLocation }
          }
       }
       else {
-         // TXT
-         textSnippet = "Text selection"; // Placeholder
+         textSnippet = "Text selection"; 
          positionData = { percentage: book.progress };
       }
 
@@ -246,14 +233,11 @@ export const Reader: React.FC<ReaderProps> = ({ book, onClose, initialLocation }
     }
   };
 
-  // Jump to Bookmark
   const handleJumpToBookmark = (b: Bookmark) => {
      if (book.format === 'pdf' && b.page) {
         setPdfPageNum(b.page);
      } else if (book.format === 'epub' && b.cfi && epubRendition) {
         epubRendition.display(b.cfi);
-     } else {
-        // TXT jump not implemented fully in Phase 1
      }
      setShowBookmarksPanel(false);
   };
@@ -267,7 +251,6 @@ export const Reader: React.FC<ReaderProps> = ({ book, onClose, initialLocation }
     window.getSelection()?.removeAllRanges();
     if (epubRendition) {
       try {
-         // Accessing iframe content safely
          const iframe = epubContainerRef.current?.querySelector('iframe');
          if (iframe && iframe.contentWindow) {
             iframe.contentWindow.getSelection()?.removeAllRanges();
@@ -277,13 +260,11 @@ export const Reader: React.FC<ReaderProps> = ({ book, onClose, initialLocation }
   };
 
   const handleTextSelection = (e: MouseEvent | TouchEvent) => {
-    // Don't trigger if clicking controls
     if ((e.target as HTMLElement).closest('button') || (e.target as HTMLElement).closest('.no-select')) return;
 
     setTimeout(() => {
       const selection = window.getSelection();
       if (!selection || selection.isCollapsed) {
-        // Check EPUB iframe selection - logic handled by epub 'selected' event usually
         setSelectionMenu(null);
         return;
       }
@@ -294,7 +275,6 @@ export const Reader: React.FC<ReaderProps> = ({ book, onClose, initialLocation }
       const range = selection.getRangeAt(0);
       const rect = range.getBoundingClientRect();
       
-      // For PDF, calculate relative rects
       if (book.format === 'pdf' && highlightLayerRef.current && textLayerRef.current) {
          const layerRect = textLayerRef.current.getBoundingClientRect();
          if(!textLayerRef.current.contains(range.commonAncestorContainer)) return;
@@ -314,7 +294,6 @@ export const Reader: React.FC<ReaderProps> = ({ book, onClose, initialLocation }
             rects: relativeRects
          });
       } else if (book.format === 'txt' || book.format === 'md') {
-         // TXT logic simplified
          setSelectionMenu({
             x: rect.left + rect.width / 2,
             y: rect.top - 10,
@@ -400,7 +379,6 @@ export const Reader: React.FC<ReaderProps> = ({ book, onClose, initialLocation }
             width: '100%', height: '100%', flow: 'paginated', manager: 'default'
           });
 
-          // Theme Registration (same as before)
           const themes = {
              day: { body: { color: '#1a1a1a', background: '#fafafa' }, '::selection': { background: 'rgba(0, 102, 255, 0.3)' } },
              night: { body: { color: '#ffffff', background: '#0a0a0a' }, '::selection': { background: 'rgba(0, 102, 255, 0.3)' } },
@@ -410,7 +388,6 @@ export const Reader: React.FC<ReaderProps> = ({ book, onClose, initialLocation }
           };
           Object.entries(themes).forEach(([k, v]) => rendition.themes.register(k, v));
           
-          // Highlight Styles
           rendition.themes.default({
              '.highlight-yellow': { fill: 'rgba(250, 204, 21, 0.3)', 'mix-blend-mode': 'multiply' },
              '.highlight-green': { fill: 'rgba(74, 222, 128, 0.3)', 'mix-blend-mode': 'multiply' },
@@ -419,7 +396,6 @@ export const Reader: React.FC<ReaderProps> = ({ book, onClose, initialLocation }
              '.highlight-red': { fill: 'rgba(248, 113, 113, 0.3)', 'mix-blend-mode': 'multiply' }
           });
 
-          // Initial Navigation (Wait for book loaded)
           await bookObj.ready;
           const startLoc = initialLocation?.cfi || book.currentCfi || undefined;
           await rendition.display(startLoc);
@@ -456,7 +432,6 @@ export const Reader: React.FC<ReaderProps> = ({ book, onClose, initialLocation }
             }
           });
 
-          // Restore Highlights
           if (highlights) {
              highlights.forEach(hl => {
                 if (hl.cfiRange) {
@@ -482,9 +457,8 @@ export const Reader: React.FC<ReaderProps> = ({ book, onClose, initialLocation }
       };
       loadEpub();
     }
-  }, [book.format]); // Re-init if format changes (unlikely)
+  }, [book.id, book.format]); // CRITICAL FIX: Changed [book.format] to [book.id, book.format]
 
-  // Update EPUB Styles
   useEffect(() => {
     if (epubRendition && settings) {
       epubRendition.themes.select(settings.theme);
@@ -492,7 +466,6 @@ export const Reader: React.FC<ReaderProps> = ({ book, onClose, initialLocation }
       epubRendition.themes.font(settings.fontFamily === 'sans' ? 'Inter, sans-serif' : settings.fontFamily === 'serif' ? 'Playfair Display, serif' : 'JetBrains Mono, monospace');
     }
   }, [settings, epubRendition]);
-
 
   // --------------------------------------------------------------------------
   // PDF ENGINE
@@ -510,7 +483,7 @@ export const Reader: React.FC<ReaderProps> = ({ book, onClose, initialLocation }
       };
       loadPdf();
     }
-  }, [book]);
+  }, [book.id, book.format]); // CRITICAL FIX: Changed [book] to [book.id, book.format]
 
   useEffect(() => {
     if (!pdfDoc || !canvasRef.current || !settings) return;
@@ -559,11 +532,10 @@ export const Reader: React.FC<ReaderProps> = ({ book, onClose, initialLocation }
   };
   
   // --------------------------------------------------------------------------
-  // UI TIMEOUTS
+  // UI TIMEOUTS & AUTO HIDE
   // --------------------------------------------------------------------------
   const resetControlsTimeout = useCallback(() => {
     setShowControls(true);
-    // Keep user active
     handleUserActivity();
     
     if (controlsTimeoutRef.current) clearTimeout(controlsTimeoutRef.current);
@@ -590,16 +562,16 @@ export const Reader: React.FC<ReaderProps> = ({ book, onClose, initialLocation }
   const isEpub = book.format === 'epub';
 
   return (
-    <motion.div 
-      initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+    <div 
       className={`min-h-screen transition-colors duration-500 ${theme.bg} ${theme.text} selection:bg-blue-500/30 relative overflow-hidden`}
+      style={{ paddingTop: hasTabs ? '40px' : '0px' }}
     >
       {/* TOAST */}
       <AnimatePresence>
         {toast && (
            <motion.div 
              initial={{ opacity: 0, y: -50 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -50 }}
-             className="fixed top-20 left-1/2 -translate-x-1/2 z-[100] bg-gradient-to-r from-blue-600 to-purple-600 text-white px-6 py-2 rounded-full shadow-xl flex items-center gap-2"
+             className="fixed top-24 left-1/2 -translate-x-1/2 z-[100] bg-gradient-to-r from-blue-600 to-purple-600 text-white px-6 py-2 rounded-full shadow-xl flex items-center gap-2"
            >
               <Check className="w-4 h-4" /> {toast}
            </motion.div>
@@ -610,7 +582,8 @@ export const Reader: React.FC<ReaderProps> = ({ book, onClose, initialLocation }
       <motion.div 
         initial={{ y: -100 }}
         animate={{ y: showControls || showSettings || showTOC || showBookmarksPanel ? 0 : -100 }}
-        className={`fixed top-0 left-0 right-0 h-16 ${theme.ui} backdrop-blur-lg border-b ${theme.border} z-40 flex items-center justify-between px-4 md:px-8 shadow-sm`}
+        className={`fixed left-0 right-0 h-16 ${theme.ui} backdrop-blur-lg border-b ${theme.border} z-40 flex items-center justify-between px-4 md:px-8 shadow-sm`}
+        style={{ top: hasTabs ? '0px' : '0px' }}
       >
         <div className="flex items-center gap-4">
           <button onClick={onClose} className={`p-2 rounded-full hover:bg-white/10 transition-colors ${theme.text}`}>
@@ -628,7 +601,6 @@ export const Reader: React.FC<ReaderProps> = ({ book, onClose, initialLocation }
         </div>
 
         <div className="flex items-center gap-2">
-             {/* Phase 2 Placeholder */}
              <button 
                disabled 
                className="p-2 rounded-full opacity-30 cursor-not-allowed hover:bg-transparent flex items-center gap-2"
@@ -638,12 +610,10 @@ export const Reader: React.FC<ReaderProps> = ({ book, onClose, initialLocation }
             </button>
             <div className="w-[1px] h-6 bg-current opacity-10 mx-1" />
 
-            {/* BOOKMARK RIBBON BUTTON */}
             <button 
               onClick={() => handleToggleBookmark('standard')}
-              onContextMenu={(e) => { e.preventDefault(); handleToggleBookmark('favorite'); }} // Right click for fav as simple alternative to long press
+              onContextMenu={(e) => { e.preventDefault(); handleToggleBookmark('favorite'); }}
               className="p-2 rounded-full hover:bg-white/10 relative group"
-              title="Click to bookmark, Right-click for Favorite"
             >
               <BookmarkIcon 
                  className={`w-5 h-5 transition-all duration-300 ${activeBookmark ? (activeBookmark.type === 'favorite' ? 'fill-yellow-400 text-yellow-400' : 'fill-blue-500 text-blue-500') : 'text-current opacity-50 group-hover:opacity-100'}`} 
@@ -651,7 +621,6 @@ export const Reader: React.FC<ReaderProps> = ({ book, onClose, initialLocation }
               {activeBookmark && <motion.div layoutId="bookmark-glow" className="absolute inset-0 bg-blue-500/20 blur-md rounded-full" />}
             </button>
             
-            {/* BOOKMARKS PANEL TOGGLE */}
              <button 
               onClick={() => setShowBookmarksPanel(!showBookmarksPanel)}
               className={`p-2 rounded-full transition-colors ${showBookmarksPanel ? 'bg-blue-500 text-white' : 'hover:bg-white/10'}`}
@@ -669,7 +638,7 @@ export const Reader: React.FC<ReaderProps> = ({ book, onClose, initialLocation }
       </motion.div>
 
       {/* CONTEXT MENU & MODALS */}
-      <AnimatePresence>
+       <AnimatePresence>
         {selectionMenu && (
           <motion.div
              initial={{ opacity: 0, scale: 0.8, y: 10 }} animate={{ opacity: 1, scale: 1, y: 0 }} exit={{ opacity: 0, scale: 0.8 }}
@@ -706,9 +675,8 @@ export const Reader: React.FC<ReaderProps> = ({ book, onClose, initialLocation }
          )}
       </AnimatePresence>
 
-      {/* PANELS */}
-      <AnimatePresence>
-        {/* TOC PANEL */}
+      {/* SETTINGS & TOC PANELS */}
+       <AnimatePresence>
         {showTOC && isEpub && (
            <>
              <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={() => setShowTOC(false)} className="fixed inset-0 bg-black/40 z-40 backdrop-blur-[1px]" />
@@ -727,8 +695,7 @@ export const Reader: React.FC<ReaderProps> = ({ book, onClose, initialLocation }
              </motion.div>
            </>
         )}
-
-        {/* SETTINGS PANEL */}
+        
         {showSettings && (
           <>
             <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={() => setShowSettings(false)} className="fixed inset-0 bg-black/20 z-40 backdrop-blur-[2px]" />
@@ -772,8 +739,7 @@ export const Reader: React.FC<ReaderProps> = ({ book, onClose, initialLocation }
             </motion.div>
           </>
         )}
-        
-        {/* BOOKMARKS PANEL */}
+
         {showBookmarksPanel && (
           <>
             <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={() => setShowBookmarksPanel(false)} className="fixed inset-0 bg-black/20 z-40 backdrop-blur-[2px]" />
@@ -825,7 +791,6 @@ export const Reader: React.FC<ReaderProps> = ({ book, onClose, initialLocation }
              <div className={`relative shadow-2xl transition-all duration-300 ${settings.theme === 'night' ? 'brightness-90 sepia-[.1]' : ''} ${settings.theme === 'sepia' ? 'sepia-[.3]' : ''}`}>
                 <canvas ref={canvasRef} className="max-w-full h-auto rounded-sm block" />
                 <div ref={textLayerRef} className="textLayer" />
-                {/* Highlights Overlay */}
                 <div ref={highlightLayerRef} className="absolute inset-0 pointer-events-none">
                    {highlights?.filter(h => h.page === pdfPageNum).map(hl => (
                       <div key={hl.id}>
@@ -881,7 +846,6 @@ export const Reader: React.FC<ReaderProps> = ({ book, onClose, initialLocation }
         className={`fixed bottom-0 left-0 right-0 h-20 ${theme.ui} backdrop-blur-lg border-t ${theme.border} z-40 flex items-center justify-center px-4 shadow-[0_-10px_30px_rgba(0,0,0,0.1)]`}
       >
         <div className="w-full max-w-3xl flex items-center justify-between gap-4">
-           {/* Prev Button */}
            <button 
               onClick={() => isPdf ? changePdfPage(-1) : isEpub ? epubRendition?.prev() : null}
               disabled={isPdf && pdfPageNum <= 1}
@@ -891,18 +855,21 @@ export const Reader: React.FC<ReaderProps> = ({ book, onClose, initialLocation }
            </button>
            
            {/* Progress Bar Container */}
-           <div className="flex-1 flex flex-col items-center">
-               <div className="text-sm font-bold font-mono mb-2">
+           <div className="flex-1 flex flex-col items-center group">
+               <div className="text-sm font-bold font-mono mb-2 opacity-60 group-hover:opacity-100 transition-opacity">
                  {isPdf ? `Page ${pdfPageNum} of ${numPages}` : `${Math.round(book.progress)}%`}
                </div>
-               <div className="relative w-full h-1.5 bg-current/10 rounded-full">
-                  {/* Progress Fill */}
+               <div className="relative w-full h-1.5 bg-current/10 rounded-full hover:h-2 transition-all cursor-pointer">
                   <div 
                     className="h-full bg-blue-500 rounded-full transition-all duration-300 relative z-10" 
                     style={{ width: isPdf ? `${(pdfPageNum / numPages) * 100}%` : `${book.progress}%` }} 
                   />
                   
-                  {/* Bookmark Markers */}
+                  {/* Ticks at 25/50/75 */}
+                  {[25, 50, 75].map(t => (
+                     <div key={t} className="absolute top-0 bottom-0 w-[1px] bg-white/20 z-0 pointer-events-none" style={{ left: `${t}%` }} />
+                  ))}
+
                   {bookmarks?.map(b => (
                     <div 
                       key={b.id}
@@ -914,7 +881,6 @@ export const Reader: React.FC<ReaderProps> = ({ book, onClose, initialLocation }
                </div>
            </div>
            
-           {/* Next Button */}
            <button 
               onClick={() => isPdf ? changePdfPage(1) : isEpub ? epubRendition?.next() : null}
               disabled={isPdf && pdfPageNum >= numPages}
@@ -924,6 +890,6 @@ export const Reader: React.FC<ReaderProps> = ({ book, onClose, initialLocation }
            </button>
         </div>
       </motion.div>
-    </motion.div>
+    </div>
   );
 };
