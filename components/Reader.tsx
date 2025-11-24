@@ -27,6 +27,7 @@ interface ReaderProps {
   onClose: () => void;
   initialLocation?: { page?: number, cfi?: string };
   hasTabs?: boolean;
+  onToggleUI?: (visible: boolean) => void;
 }
 
 // Helper colors map for UI
@@ -38,7 +39,7 @@ const HIGHLIGHT_COLORS: {id: HighlightColor, hex: string, class: string}[] = [
   { id: 'red', hex: '#f87171', class: 'highlight-red' },
 ];
 
-export const Reader: React.FC<ReaderProps> = ({ book, onClose, initialLocation, hasTabs = false }) => {
+export const Reader: React.FC<ReaderProps> = ({ book, onClose, initialLocation, hasTabs = false, onToggleUI }) => {
   const [settings, setSettings] = useState<ReadingSettings | null>(null);
   
   // UI Visibility State
@@ -65,6 +66,13 @@ export const Reader: React.FC<ReaderProps> = ({ book, onClose, initialLocation, 
   const [pdfDoc, setPdfDoc] = useState<any>(null);
   const [pdfPageNum, setPdfPageNum] = useState(initialLocation?.page || book.currentPage || 1);
   const [numPages, setNumPages] = useState(0);
+  const [baseScale, setBaseScale] = useState(1.0); // Scale to fit screen width perfectly
+  
+  // Pinch Zoom State
+  const [pinchScale, setPinchScale] = useState(1); // CSS Scale during gesture
+  const pinchStartDist = useRef<number>(0);
+  const pinchStartScale = useRef<number>(1);
+  const isPinching = useRef<boolean>(false);
   
   // EPUB Mode State & Refs
   const [epubRendition, setEpubRendition] = useState<any>(null);
@@ -73,8 +81,6 @@ export const Reader: React.FC<ReaderProps> = ({ book, onClose, initialLocation, 
   const [epubReady, setEpubReady] = useState(false);
   const [currentCfi, setCurrentCfi] = useState<string | null>(null);
   
-  // Controls timeout
-  const controlsTimeoutRef = useRef<any>(null);
   const containerRef = useRef<HTMLDivElement>(null);
 
   // --- SESSION TRACKING STATE ---
@@ -83,6 +89,11 @@ export const Reader: React.FC<ReaderProps> = ({ book, onClose, initialLocation, 
   const lastActivity = useRef<number>(Date.now());
   const isIdle = useRef<boolean>(false);
   const idleTimeout = useRef<any>(null);
+
+  // Sync with parent UI state
+  useEffect(() => {
+     if (onToggleUI) onToggleUI(showControls);
+  }, [showControls, onToggleUI]);
 
   // Initialize Settings
   useEffect(() => {
@@ -104,20 +115,23 @@ export const Reader: React.FC<ReaderProps> = ({ book, onClose, initialLocation, 
     setEpubRendition(null);
   }, [book.id, book.format]);
 
-  // Deep Linking Update: React to initialLocation changes even if book is already open
+  // Deep Linking Update
   useEffect(() => {
     if (!initialLocation) return;
 
-    if (book.format === 'pdf' && initialLocation.page && initialLocation.page !== pdfPageNum) {
-       setPdfPageNum(initialLocation.page);
+    // Handle PDF Deep Linking
+    if (book.format === 'pdf' && initialLocation.page && pdfDoc && baseScale) {
+       // Wait for layout to settle
        setTimeout(() => {
           const el = document.getElementById(`pdf-page-${initialLocation.page}`);
-          if (el) el.scrollIntoView({ behavior: 'smooth' });
-       }, 100);
-    } else if (book.format === 'epub' && epubRendition && initialLocation.cfi) {
+          if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+       }, 500);
+    } 
+    // Handle EPUB Deep Linking
+    else if (book.format === 'epub' && epubRendition && initialLocation.cfi) {
        epubRendition.display(initialLocation.cfi);
     }
-  }, [initialLocation, book.format, epubRendition, pdfPageNum]);
+  }, [initialLocation, book.format, epubRendition, pdfDoc, baseScale]);
 
 
   // Toast Helper
@@ -126,7 +140,7 @@ export const Reader: React.FC<ReaderProps> = ({ book, onClose, initialLocation, 
     setTimeout(() => setToast(null), 2000);
   };
 
-  // --- SESSION & IDLE TRACKING & UI AUTO-HIDE ---
+  // --- SESSION & IDLE TRACKING ---
   const handleUserActivity = useCallback(() => {
     const now = Date.now();
     
@@ -142,16 +156,7 @@ export const Reader: React.FC<ReaderProps> = ({ book, onClose, initialLocation, 
     idleTimeout.current = setTimeout(() => {
        isIdle.current = true;
     }, 60000);
-    
-    // UI Visibility Logic: Show controls on activity, hide after delay
-    if (!showSettings && !showTOC && !showBookmarksPanel && !selectionMenu) {
-       setShowControls(true);
-       if (controlsTimeoutRef.current) clearTimeout(controlsTimeoutRef.current);
-       controlsTimeoutRef.current = setTimeout(() => {
-          setShowControls(false);
-       }, 3000);
-    }
-  }, [showSettings, showTOC, showBookmarksPanel, selectionMenu]);
+  }, []);
 
   useEffect(() => {
      const interval = setInterval(() => {
@@ -170,7 +175,6 @@ export const Reader: React.FC<ReaderProps> = ({ book, onClose, initialLocation, 
      return () => {
         clearInterval(interval);
         if (idleTimeout.current) clearTimeout(idleTimeout.current);
-        if (controlsTimeoutRef.current) clearTimeout(controlsTimeoutRef.current);
         window.removeEventListener('mousemove', handleUserActivity);
         window.removeEventListener('keydown', handleUserActivity);
         window.removeEventListener('click', handleUserActivity);
@@ -182,6 +186,23 @@ export const Reader: React.FC<ReaderProps> = ({ book, onClose, initialLocation, 
         }
      };
   }, [book.id, handleUserActivity]);
+
+  // Toggle Controls on content click
+  const toggleControls = useCallback(() => {
+     // Prevent hiding if a modal/panel is open
+     if (showSettings || showTOC || showBookmarksPanel || selectionMenu) {
+        setShowSettings(false);
+        setShowTOC(false);
+        setShowBookmarksPanel(false);
+        setSelectionMenu(null);
+        return; // Keep controls visible if we just closed a panel
+     }
+     // Don't toggle if dragging/pinching
+     if (isPinching.current) return;
+     
+     setShowControls(prev => !prev);
+  }, [showSettings, showTOC, showBookmarksPanel, selectionMenu]);
+
 
   // --------------------------------------------------------------------------
   // BOOKMARKING LOGIC
@@ -369,11 +390,11 @@ export const Reader: React.FC<ReaderProps> = ({ book, onClose, initialLocation, 
              night: { 
                 body: { color: '#ffffff', background: '#0a0a0a' }, 
                 '::selection': { background: 'rgba(0, 102, 255, 0.3)' },
-                '.highlight-yellow': { fill: 'rgba(250, 204, 21, 0.6)', 'mix-blend-mode': 'normal' },
-                '.highlight-green': { fill: 'rgba(74, 222, 128, 0.6)', 'mix-blend-mode': 'normal' },
-                '.highlight-blue': { fill: 'rgba(96, 165, 250, 0.6)', 'mix-blend-mode': 'normal' },
-                '.highlight-purple': { fill: 'rgba(192, 132, 252, 0.6)', 'mix-blend-mode': 'normal' },
-                '.highlight-red': { fill: 'rgba(248, 113, 113, 0.6)', 'mix-blend-mode': 'normal' }
+                '.highlight-yellow': { fill: 'rgba(250, 204, 21, 0.5)', 'mix-blend-mode': 'normal' },
+                '.highlight-green': { fill: 'rgba(74, 222, 128, 0.5)', 'mix-blend-mode': 'normal' },
+                '.highlight-blue': { fill: 'rgba(96, 165, 250, 0.5)', 'mix-blend-mode': 'normal' },
+                '.highlight-purple': { fill: 'rgba(192, 132, 252, 0.5)', 'mix-blend-mode': 'normal' },
+                '.highlight-red': { fill: 'rgba(248, 113, 113, 0.5)', 'mix-blend-mode': 'normal' }
              },
              sepia: { 
                 body: { color: '#3e2723', background: '#f4ecd8' }, 
@@ -400,15 +421,6 @@ export const Reader: React.FC<ReaderProps> = ({ book, onClose, initialLocation, 
           };
           Object.entries(themes).forEach(([k, v]) => rendition.themes.register(k, v));
           
-          // Default highlights (works best for light themes)
-          rendition.themes.default({
-             '.highlight-yellow': { fill: 'rgba(250, 204, 21, 0.3)', 'mix-blend-mode': 'multiply' },
-             '.highlight-green': { fill: 'rgba(74, 222, 128, 0.3)', 'mix-blend-mode': 'multiply' },
-             '.highlight-blue': { fill: 'rgba(96, 165, 250, 0.3)', 'mix-blend-mode': 'multiply' },
-             '.highlight-purple': { fill: 'rgba(192, 132, 252, 0.3)', 'mix-blend-mode': 'multiply' },
-             '.highlight-red': { fill: 'rgba(248, 113, 113, 0.3)', 'mix-blend-mode': 'multiply' }
-          });
-
           await bookObj.ready;
           const startLoc = initialLocation?.cfi || book.currentCfi || undefined;
           await rendition.display(startLoc);
@@ -426,7 +438,7 @@ export const Reader: React.FC<ReaderProps> = ({ book, onClose, initialLocation, 
           });
 
           rendition.on('click', () => {
-             setShowControls(prev => !prev);
+             toggleControls();
              setSelectionMenu(null);
              setActiveHighlightId(null);
           });
@@ -450,7 +462,7 @@ export const Reader: React.FC<ReaderProps> = ({ book, onClose, initialLocation, 
       };
       loadEpub();
     }
-  }, [book.id, book.format]);
+  }, [book.id, book.format, toggleControls]);
 
   useEffect(() => {
     if (epubRendition && settings) {
@@ -461,8 +473,10 @@ export const Reader: React.FC<ReaderProps> = ({ book, onClose, initialLocation, 
   }, [settings, epubRendition]);
 
   // --------------------------------------------------------------------------
-  // PDF ENGINE (Continuous Scroll)
+  // PDF ENGINE (Continuous Scroll & Pinch Zoom)
   // --------------------------------------------------------------------------
+  
+  // Calculate Base Scale (Perfect Fit)
   useEffect(() => {
     if (book.format === 'pdf' && window.pdfjsLib) {
       const loadPdf = async () => {
@@ -472,31 +486,29 @@ export const Reader: React.FC<ReaderProps> = ({ book, onClose, initialLocation, 
         setPdfDoc(pdf);
         setNumPages(pdf.numPages);
         
-        // Scroll to initial page on first load
-        if (initialLocation?.page || book.currentPage) {
-           setTimeout(() => {
-              const pageNum = initialLocation?.page || book.currentPage || 1;
-              const el = document.getElementById(`pdf-page-${pageNum}`);
-              if (el) el.scrollIntoView();
-           }, 500);
+        // Calculate Base Scale (Perfect Width Fit)
+        if (containerRef.current) {
+           const page1 = await pdf.getPage(1);
+           const viewport = page1.getViewport({ scale: 1.0 });
+           const containerWidth = containerRef.current.clientWidth;
+           // Account for padding (approx 32px total horizontal padding)
+           const idealScale = (containerWidth - 32) / viewport.width;
+           setBaseScale(idealScale);
         }
       };
       loadPdf();
     }
   }, [book.id, book.format]);
 
-  const handlePdfPageInView = useCallback((pageNum: number) => {
-     setPdfPageNum(pageNum);
-     updateBookPage(book.id, pageNum, numPages);
-  }, [book.id, numPages]);
-
   // Smart Scroll Handler for PDF (Wheel Navigation)
   const handlePdfWheel = (e: React.WheelEvent) => {
     const scrollContainer = containerRef.current?.querySelector('.scroll-smooth');
     if (!scrollContainer) return;
     
-    // If content fits height (not scrolled), treat wheel as page turn
-    if (scrollContainer.scrollHeight <= scrollContainer.clientHeight) {
+    // Only flip pages if content fits height (not scrolled) and not zoomed in massively
+    const isZoomedIn = (settings?.pdfScale || 1.0) > 1.1;
+    
+    if (!isZoomedIn && scrollContainer.scrollHeight <= scrollContainer.clientHeight + 50) {
        if (e.deltaY > 0) {
           const nextPage = Math.min(numPages, pdfPageNum + 1);
           document.getElementById(`pdf-page-${nextPage}`)?.scrollIntoView({ behavior: 'smooth' });
@@ -507,16 +519,66 @@ export const Reader: React.FC<ReaderProps> = ({ book, onClose, initialLocation, 
     }
   };
 
+  const handlePdfPageInView = useCallback((pageNum: number) => {
+     setPdfPageNum(pageNum);
+     updateBookPage(book.id, pageNum, numPages);
+  }, [book.id, numPages]);
+  
+  // PINCH TO ZOOM LOGIC
+  const handleTouchStart = (e: React.TouchEvent) => {
+     if (e.touches.length === 2) {
+        isPinching.current = true;
+        const dist = Math.hypot(
+           e.touches[0].pageX - e.touches[1].pageX,
+           e.touches[0].pageY - e.touches[1].pageY
+        );
+        pinchStartDist.current = dist;
+        pinchStartScale.current = settings?.pdfScale || 1.0;
+     }
+  };
+  
+  const handleTouchMove = (e: React.TouchEvent) => {
+     if (isPinching.current && e.touches.length === 2) {
+        e.preventDefault(); // Prevent browser zoom
+        const dist = Math.hypot(
+           e.touches[0].pageX - e.touches[1].pageX,
+           e.touches[0].pageY - e.touches[1].pageY
+        );
+        const delta = dist / pinchStartDist.current;
+        const newScale = Math.max(1.0, Math.min(3.0, pinchStartScale.current * delta));
+        
+        // Use CSS scale for smooth gesture
+        setPinchScale(newScale / (settings?.pdfScale || 1.0)); 
+     }
+  };
+  
+  const handleTouchEnd = () => {
+     if (isPinching.current) {
+        isPinching.current = false;
+        const finalScale = Math.max(1.0, Math.min(3.0, (settings?.pdfScale || 1.0) * pinchScale));
+        setSettings(prev => prev ? ({ ...prev, pdfScale: finalScale }) : null);
+        setPinchScale(1); // Reset CSS scale
+     }
+  };
+
+
   if (!settings) return null;
   const theme = THEMES[settings.theme];
   const isPdf = book.format === 'pdf';
   const isEpub = book.format === 'epub';
+  
+  // Actual rendering scale for PDF is Base Scale (Fit Width) * User Zoom Level (1.0 - 3.0)
+  const actualPdfScale = isPdf ? baseScale * (settings.pdfScale || 1.0) : 1.0;
 
   return (
     <div 
       ref={containerRef}
       className={`fixed inset-0 transition-colors duration-500 ${theme.bg} ${theme.text} selection:bg-blue-500/30 overflow-hidden touch-action-pan-y`}
       onWheel={isPdf ? handlePdfWheel : undefined}
+      onClick={toggleControls}
+      onTouchStart={handleTouchStart}
+      onTouchMove={handleTouchMove}
+      onTouchEnd={handleTouchEnd}
     >
       {/* TOAST */}
       <AnimatePresence>
@@ -535,8 +597,7 @@ export const Reader: React.FC<ReaderProps> = ({ book, onClose, initialLocation, 
         initial={{ y: -100 }}
         animate={{ y: showControls || showSettings || showTOC || showBookmarksPanel ? 0 : -100 }}
         transition={{ duration: 0.3, ease: 'easeInOut' }}
-        className={`absolute left-0 right-0 h-16 ${theme.ui} backdrop-blur-lg border-b ${theme.border} z-40 flex items-center justify-between px-4 md:px-8 shadow-sm`}
-        style={{ top: hasTabs ? '40px' : '0px' }} // Adjust for Tab Bar
+        className={`absolute top-0 left-0 right-0 h-16 ${theme.ui} backdrop-blur-lg border-b ${theme.border} z-40 flex items-center justify-between px-4 md:px-8 shadow-sm`}
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center gap-2 md:gap-4">
@@ -659,11 +720,35 @@ export const Reader: React.FC<ReaderProps> = ({ book, onClose, initialLocation, 
                  </div>
                  {isPdf ? (
                     <div className="mb-8">
-                      <label className="text-xs font-bold uppercase tracking-wider opacity-50 mb-4 block">Zoom</label>
+                      <label className="text-xs font-bold uppercase tracking-wider opacity-50 mb-4 block">Zoom Level</label>
                       <div className="flex items-center gap-4 bg-black/10 p-3 rounded-xl">
-                        <button onClick={() => { const newScale = Math.max(0.5, Math.min(3.0, (settings.pdfScale || 1.0) - 0.25)); setSettings({ ...settings, pdfScale: newScale }); }} className="p-3 md:p-2 hover:bg-white/10 rounded-full"><ZoomOut className="w-6 h-6" /></button>
-                        <div className="flex-1 text-center font-mono font-bold text-lg">{Math.round((settings.pdfScale || 1.0) * 100)}%</div>
-                        <button onClick={() => { const newScale = Math.max(0.5, Math.min(3.0, (settings.pdfScale || 1.0) + 0.25)); setSettings({ ...settings, pdfScale: newScale }); }} className="p-3 md:p-2 hover:bg-white/10 rounded-full"><ZoomIn className="w-6 h-6" /></button>
+                        <button 
+                           onClick={() => { const newScale = Math.max(1.0, (settings.pdfScale || 1.0) - 0.25); setSettings({ ...settings, pdfScale: newScale }); }} 
+                           className="p-3 md:p-2 hover:bg-white/10 rounded-full disabled:opacity-30"
+                           disabled={(settings.pdfScale || 1.0) <= 1.0}
+                        >
+                           <ZoomOut className="w-6 h-6" />
+                        </button>
+                        <div className="flex-1 text-center">
+                           <div className="font-mono font-bold text-lg">{Math.round((settings.pdfScale || 1.0) * 100)}%</div>
+                           <div className="text-[10px] opacity-50 uppercase tracking-wider">{(settings.pdfScale || 1.0) === 1.0 ? 'Perfect Fit' : 'Zoomed In'}</div>
+                        </div>
+                        <button 
+                           onClick={() => { const newScale = Math.min(3.0, (settings.pdfScale || 1.0) + 0.25); setSettings({ ...settings, pdfScale: newScale }); }} 
+                           className="p-3 md:p-2 hover:bg-white/10 rounded-full disabled:opacity-30"
+                           disabled={(settings.pdfScale || 1.0) >= 3.0}
+                        >
+                           <ZoomIn className="w-6 h-6" />
+                        </button>
+                      </div>
+                      <div className="mt-4 px-2">
+                         <input 
+                           type="range" 
+                           min="1.0" max="3.0" step="0.1" 
+                           value={settings.pdfScale || 1.0} 
+                           onChange={(e) => setSettings({...settings, pdfScale: parseFloat(e.target.value)})} 
+                           className="w-full accent-blue-500 h-1.5 bg-current/10 rounded-lg appearance-none cursor-pointer" 
+                        />
                       </div>
                     </div>
                  ) : (
@@ -727,17 +812,20 @@ export const Reader: React.FC<ReaderProps> = ({ book, onClose, initialLocation, 
       </AnimatePresence>
 
       {/* MAIN RENDERER AREA */}
-      <div className={`w-full h-full transition-all duration-300 ease-in-out flex flex-col items-center ${!isPdf && !isEpub ? 'pt-24 pb-32 px-4 overflow-y-auto' : ''}`}>
+      <div className={`w-full h-full transition-all duration-300 ease-in-out flex flex-col items-center ${!isPdf && !isEpub ? (hasTabs ? 'pt-28 pb-32 px-4 overflow-y-auto' : 'pt-24 pb-32 px-4 overflow-y-auto') : ''}`}>
          
          {/* PDF CANVAS */}
          {isPdf && pdfDoc && (
-           <div className="w-full h-full overflow-y-auto overflow-x-hidden flex flex-col items-center scroll-smooth pt-20 pb-24 bg-[#0a0a0a]">
+           <div 
+              className={`w-full h-full overflow-y-auto overflow-x-hidden flex flex-col items-center scroll-smooth ${hasTabs ? 'pt-28' : 'pt-20'} pb-24 bg-[#0a0a0a] origin-top`}
+              style={{ transform: `scale(${pinchScale})`, transformOrigin: 'top center' }}
+           >
               {Array.from({ length: numPages }, (_, i) => i + 1).map(pageNum => (
                  <PdfPage 
                    key={pageNum}
                    pageNum={pageNum}
                    pdfDoc={pdfDoc}
-                   scale={settings.pdfScale || 1.0}
+                   scale={actualPdfScale}
                    onInView={handlePdfPageInView}
                    highlights={highlights?.filter(h => h.page === pageNum)}
                    activeHighlightId={activeHighlightId}
@@ -755,7 +843,7 @@ export const Reader: React.FC<ReaderProps> = ({ book, onClose, initialLocation, 
 
          {/* EPUB CONTAINER */}
          {isEpub && (
-            <div className="w-full h-full pt-16 pb-24 flex justify-center relative">
+            <div className={`w-full h-full ${hasTabs ? 'pt-24' : 'pt-16'} pb-24 flex justify-center relative`}>
                <div ref={epubContainerRef} className="w-full h-full max-w-4xl px-2 md:px-12" style={{ opacity: epubReady ? 1 : 0, transition: 'opacity 0.5s' }} />
                {!epubReady && <div className="absolute inset-0 flex items-center justify-center"><div className="w-8 h-8 border-2 border-blue-500 border-t-transparent rounded-full animate-spin"></div></div>}
             </div>
@@ -861,6 +949,8 @@ const PdfPage: React.FC<{
   const textLayerRef = useRef<HTMLDivElement>(null);
   const [rendered, setRendered] = useState(false);
   const [dimensions, setDimensions] = useState({ width: 600, height: 800 });
+  
+  // IMPORTANT: Track the active render task to cancel it if needed
   const renderTaskRef = useRef<any>(null);
   
   const ref = useRef<HTMLDivElement>(null);
@@ -897,11 +987,11 @@ const PdfPage: React.FC<{
      if (isInView && !rendered && pdfDoc && dimensions.width > 0) {
         const render = async () => {
            try {
-              // Cancel any existing render task
+              // Cancel any existing render task before starting a new one
               if (renderTaskRef.current) {
                  try {
                    await renderTaskRef.current.cancel();
-                 } catch (e) { /* ignore */ }
+                 } catch (e) { /* ignore cancel error */ }
                  renderTaskRef.current = null;
               }
 
@@ -941,6 +1031,7 @@ const PdfPage: React.FC<{
                  }
               }
            } catch (e: any) {
+              // Ignore cancellation errors
               if (e.name !== 'RenderingCancelledException') {
                  console.error(`Error rendering page ${pageNum}`, e);
               }
@@ -951,9 +1042,10 @@ const PdfPage: React.FC<{
 
      return () => {
          isMounted = false;
+         // Cancel render on unmount or update
          if (renderTaskRef.current) {
              try {
-                 renderTaskRef.current.cancel(); // Removed invalid .catch()
+                 renderTaskRef.current.cancel();
              } catch(e) { /* ignore */ }
          }
      };

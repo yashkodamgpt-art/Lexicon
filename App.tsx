@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect, useCallback } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { Library } from './components/Library';
@@ -17,6 +16,9 @@ export default function App() {
   
   // Map to store initialLocations for each tab to pass to Reader
   const [tabLocations, setTabLocations] = useState<Record<string, {page?: number, cfi?: string}>>({});
+  
+  // UI Visibility State (Syncs with Reader)
+  const [uiVisible, setUiVisible] = useState(true);
 
   // Load initial tabs
   useEffect(() => {
@@ -129,7 +131,12 @@ export default function App() {
           >
             {/* TAB BAR */}
             {tabs.length > 0 && (
-              <div className="fixed top-0 left-0 right-0 h-10 bg-black/80 backdrop-blur-md border-b border-white/5 z-[60] flex items-end px-4 gap-1 overflow-x-auto no-scrollbar">
+              <motion.div 
+                 initial={{ y: -100 }}
+                 animate={{ y: uiVisible ? 0 : -100 }}
+                 transition={{ duration: 0.3, ease: 'easeInOut' }}
+                 className="fixed top-16 left-0 right-0 h-10 bg-black/80 backdrop-blur-md border-b border-white/5 z-[30] flex items-end px-4 gap-1 overflow-x-auto no-scrollbar"
+              >
                  {tabs.map(tab => (
                     <div 
                        key={tab.id}
@@ -161,7 +168,7 @@ export default function App() {
                  >
                     <Plus className="w-4 h-4" />
                  </button>
-              </div>
+              </motion.div>
             )}
 
             {/* READERS - Multi-Instance Rendering */}
@@ -175,6 +182,7 @@ export default function App() {
                         onClose={() => setView('library')} 
                         initialLocation={tabLocations[tab.id]}
                         hasTabs={tabs.length > 0}
+                        onToggleUI={setUiVisible}
                      />
                   </div>
                );
@@ -192,8 +200,9 @@ const ReaderWrapper: React.FC<{
   isActive: boolean, 
   onClose: () => void, 
   initialLocation?: {page?: number, cfi?: string},
-  hasTabs: boolean
-}> = ({ tab, isActive, onClose, initialLocation, hasTabs }) => {
+  hasTabs: boolean,
+  onToggleUI: (visible: boolean) => void
+}> = ({ tab, isActive, onClose, initialLocation, hasTabs, onToggleUI }) => {
    const book = useLiveQuery(() => db.books.get(tab.bookId));
    
    if (!book) return <div className="flex items-center justify-center h-screen bg-[#0a0a0a] text-zinc-500">Loading book...</div>;
@@ -204,6 +213,7 @@ const ReaderWrapper: React.FC<{
          onClose={onClose} 
          initialLocation={initialLocation} 
          hasTabs={hasTabs}
+         onToggleUI={onToggleUI}
       />
    );
 };

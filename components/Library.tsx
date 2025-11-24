@@ -113,7 +113,7 @@ export const Library: React.FC<LibraryProps> = ({ onOpenBook, onQuoteClick, init
 
   return (
     <div 
-      className="min-h-screen bg-[#0a0a0a] text-white relative overflow-y-auto overflow-x-hidden pb-24 md:pb-0"
+      className="h-screen bg-[#0a0a0a] text-white relative overflow-y-auto overflow-x-hidden custom-scrollbar"
       onDragOver={(e) => { e.preventDefault(); setIsDragging(true); }}
       onDragLeave={() => setIsDragging(false)}
       onDrop={handleDrop}

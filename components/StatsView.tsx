@@ -140,7 +140,7 @@ export const StatsView: React.FC = () => {
   );
 
   return (
-    <div className="min-h-screen bg-[#0a0a0a] text-white pb-32 md:pb-20">
+    <div className="min-h-full bg-[#0a0a0a] text-white pb-32 md:pb-24">
       {/* Header */}
       <div className="glass border-b border-white/5 px-4 md:px-6 py-6 md:py-8 mb-8">
         <div className="max-w-7xl mx-auto">
